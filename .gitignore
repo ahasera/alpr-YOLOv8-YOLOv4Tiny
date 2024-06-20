@@ -6,3 +6,5 @@
 *.pt
 *.txt
 venv
+gui.py
+lpdetect_video.py

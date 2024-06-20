@@ -3,6 +3,7 @@ import cv2
 from ultralytics import YOLO
 import easyocr
 from tqdm import tqdm
+import time
 
 """
 YoloV8 model initialisation 
@@ -27,7 +28,6 @@ reader = easyocr.Reader(['en'])
 The adjust_text_position is here to prevent text going over eachother 
 --> made to simplify the reading of the easyocr results, as they can be multiple results for 1 plate (with additional characters being recognized, in different orders)
 """
-
 
 def adjust_text_position(image, text_x, text_y, text, font_scale, thickness, used_positions):
     """
@@ -72,10 +72,20 @@ detect_and_recognize will first :
     11. Handle and log any exceptions that occur during the processing of the image.
 """
 
+vehicle_inference_times = []
+plate_inference_times = []
+ocr_inference_times = []
+
 def detect_and_recognize(image_path, output_folder, log_file):
     try:
         image = cv2.imread(image_path)
+        
+        # Measure vehicle detection time
+        start_time = time.time()
         results_vehicle = model_vehicle(image)
+        vehicle_time = (time.time() - start_time) * 1000  # in milliseconds
+        vehicle_inference_times.append(vehicle_time)
+        
         used_positions = []
         
         with open(log_file, 'a') as log:
@@ -90,15 +100,24 @@ def detect_and_recognize(image_path, output_folder, log_file):
                         vehicle_detected = True
                         # crop image to keep vehicle
                         vehicle = image[int(y1):int(y2), int(x1):int(x2)]
+                        
+                        # Measure plate detection time
+                        start_time = time.time()
                         results_plate = model_plate(vehicle)
+                        plate_time = (time.time() - start_time) * 1000  # in milliseconds
+                        plate_inference_times.append(plate_time)
                         
                         for result_plate in results_plate:
                             for bbox_plate in result_plate.boxes.data.tolist():
                                 px1, py1, px2, py2, pscore, pclass_id = bbox_plate
                                 # crop to get license plate 
                                 plate = vehicle[int(py1):int(py2), int(px1):int(px2)]
-                                # character recognition with EasyOCR 
+                                
+                                # Measure OCR time
+                                start_time = time.time()
                                 ocr_result = reader.readtext(plate)
+                                ocr_time = (time.time() - start_time) * 1000  # in milliseconds
+                                ocr_inference_times.append(ocr_time)
                                 
                                 """
                                 this for loop will annotate each image
@@ -128,15 +147,22 @@ def detect_and_recognize(image_path, output_folder, log_file):
             
             if not vehicle_detected:
                 # No vehicle detected, try to detect plates in the entire image
+                start_time = time.time()
                 results_plate = model_plate(image)
+                plate_time = (time.time() - start_time) * 1000  # in milliseconds
+                plate_inference_times.append(plate_time)
                 
                 for result_plate in results_plate:
                     for bbox_plate in result_plate.boxes.data.tolist():
                         x1, y1, x2, y2, score, class_id = bbox_plate
                         # Crop to get the license plate
                         plate = image[int(y1):int(y2), int(x1):int(x2)]
-                        # Character recognition with EasyOCR
+                        
+                        # Measure OCR time
+                        start_time = time.time()
                         ocr_result = reader.readtext(plate)
+                        ocr_time = (time.time() - start_time) * 1000  # in milliseconds
+                        ocr_inference_times.append(ocr_time)
                         
                         # Annotate OCR results on the original image
                         for (bbox_ocr, text, prob) in ocr_result:
@@ -179,6 +205,16 @@ def process_folder(input_folder, output_folder, log_file):
     for image_path in tqdm(images, desc="Processing images"):
         full_image_path = os.path.join(input_folder, image_path)
         detect_and_recognize(full_image_path, output_folder, log_file)
+    
+    # Calculate and display average inference times
+    avg_vehicle_time = sum(vehicle_inference_times) / len(vehicle_inference_times) if vehicle_inference_times else 0
+    avg_plate_time = sum(plate_inference_times) / len(plate_inference_times) if plate_inference_times else 0
+    avg_ocr_time = sum(ocr_inference_times) / len(ocr_inference_times) if ocr_inference_times else 0
+
+    print(f"\nAverage inference times (in ms):")
+    print(f"Vehicle detection: {avg_vehicle_time:.2f} ms")
+    print(f"Plate detection: {avg_plate_time:.2f} ms")
+    print(f"OCR: {avg_ocr_time:.2f} ms")
 
 input_folder = 'input'
 output_folder = 'output'
