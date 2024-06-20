@@ -12,13 +12,13 @@ Second one is yours or mine, for license plate object detection.
 try:
     model_vehicle = YOLO('yolov8n.pt')
 except Exception as e:
-    print(f"Erreur lors du chargement du modèle véhicule: {e}")
+    print(f"Error while loading yolov8n base model: {e}")
     exit(1)
 
 try:
     model_plate = YOLO('best.pt')  # YoloV8 model for plate detection 
 except Exception as e:
-    print(f"Erreur lors du chargement du modèle plaque: {e}")
+    print(f"Error while loading license-plate model: {e}")
     exit(1)
     
 reader = easyocr.Reader(['en'])
@@ -81,10 +81,13 @@ def detect_and_recognize(image_path, output_folder, log_file):
         with open(log_file, 'a') as log:
             log.write(f"Processing {image_path}:\n")
         
+            vehicle_detected = False
+            
             for result in results_vehicle:
                 for bbox in result.boxes.data.tolist():
                     x1, y1, x2, y2, score, class_id = bbox
                     if class_id == 2:  # We only specify car class in the coco model for object detection
+                        vehicle_detected = True
                         # crop image to keep vehicle
                         vehicle = image[int(y1):int(y2), int(x1):int(x2)]
                         results_plate = model_plate(vehicle)
@@ -94,7 +97,7 @@ def detect_and_recognize(image_path, output_folder, log_file):
                                 px1, py1, px2, py2, pscore, pclass_id = bbox_plate
                                 # crop to get license plate 
                                 plate = vehicle[int(py1):int(py2), int(px1):int(px2)]
-                                # character recognition with EeasyOCR 
+                                # character recognition with EasyOCR 
                                 ocr_result = reader.readtext(plate)
                                 
                                 """
@@ -122,13 +125,47 @@ def detect_and_recognize(image_path, output_folder, log_file):
                                 
                         # vehicule rectangle annotation 
                         cv2.rectangle(image, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 255), 2)
+            
+            if not vehicle_detected:
+                # No vehicle detected, try to detect plates in the entire image
+                results_plate = model_plate(image)
+                
+                for result_plate in results_plate:
+                    for bbox_plate in result_plate.boxes.data.tolist():
+                        x1, y1, x2, y2, score, class_id = bbox_plate
+                        # Crop to get the license plate
+                        plate = image[int(y1):int(y2), int(x1):int(x2)]
+                        # Character recognition with EasyOCR
+                        ocr_result = reader.readtext(plate)
                         
+                        # Annotate OCR results on the original image
+                        for (bbox_ocr, text, prob) in ocr_result:
+                            text_x_position = int(x1)
+                            text_y_position = int(y1) - 10
+                            if text_y_position < 10:
+                                text_y_position = int(y2) + 20
+                            text_x_position, text_y_position = adjust_text_position(
+                                image, text_x_position, text_y_position, f"{text} ({prob:.2f})", 0.9, 2, used_positions)
+                            
+                            cv2.rectangle(image, (int(x1), int(y1)),
+                                          (int(x2), int(y2)), (0, 255, 0), 2)
+                            cv2.putText(image, f"{text} ({prob:.2f})", (text_x_position, text_y_position),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+                            
+                            # Log OCR results
+                            log.write(f"  Detected plate: {text} with confidence: {prob}\n")
+                            
+                        # Annotate the plate on the original image
+                        cv2.rectangle(image, (int(x1), int(y1)),
+                                      (int(x2), int(y2)), (255, 0, 0), 2)
+                        
+        # Save the annotated image
         if not os.path.exists(output_folder):
             os.makedirs(output_folder)
             
         annotated_image_path = os.path.join(output_folder, "annotated_" + os.path.basename(image_path))
         cv2.imwrite(annotated_image_path, image)
-        print(f"Image annotée sauvegardée sous : {annotated_image_path}")
+        print(f"Annotated image saved to: {annotated_image_path}")
     
     except Exception as e:
         with open(log_file, 'a') as log:
