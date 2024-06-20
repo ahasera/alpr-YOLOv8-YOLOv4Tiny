@@ -1,0 +1,8 @@
+*.jpg
+*.png
+*.webp
+*.mp4
+*.mov
+*.pt
+*.txt
+venv
