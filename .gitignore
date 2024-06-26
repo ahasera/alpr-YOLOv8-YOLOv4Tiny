@@ -5,6 +5,15 @@
 *.mov
 *.pt
 *.txt
+*.weights
 venv
 gui.py
 lpdetect_video.py
+veenv
+picam
+ncnn
+ncnn.cpp
+darknet
+lpdetect-ncnn.py
+test-cam.py
+__pycache__

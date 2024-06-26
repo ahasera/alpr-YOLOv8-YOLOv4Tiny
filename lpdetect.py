@@ -4,6 +4,8 @@ from ultralytics import YOLO
 import easyocr
 from tqdm import tqdm
 import time
+import gc 
+import multiprocessing as mp
 
 """
 YoloV8 model initialisation 
@@ -145,8 +147,7 @@ def detect_and_recognize(image_path, output_folder, log_file):
                         # vehicule rectangle annotation 
                         cv2.rectangle(image, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 255), 2)
             
-            if not vehicle_detected:
-                # No vehicle detected, try to detect plates in the entire image
+            if not vehicle_detected: # will allow to run the second model if the first one did not detect a vehicle. Can cause problm in some situations with many objects nearby
                 start_time = time.time()
                 results_plate = model_plate(image)
                 plate_time = (time.time() - start_time) * 1000  # in milliseconds
@@ -164,7 +165,7 @@ def detect_and_recognize(image_path, output_folder, log_file):
                         ocr_time = (time.time() - start_time) * 1000  # in milliseconds
                         ocr_inference_times.append(ocr_time)
                         
-                        # Annotate OCR results on the original image
+                        # OCR annotation on the input image
                         for (bbox_ocr, text, prob) in ocr_result:
                             text_x_position = int(x1)
                             text_y_position = int(y1) - 10
@@ -178,35 +179,45 @@ def detect_and_recognize(image_path, output_folder, log_file):
                             cv2.putText(image, f"{text} ({prob:.2f})", (text_x_position, text_y_position),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
                             
-                            # Log OCR results
                             log.write(f"  Detected plate: {text} with confidence: {prob}\n")
                             
-                        # Annotate the plate on the original image
+                        # detection annotation on input image
                         cv2.rectangle(image, (int(x1), int(y1)),
                                       (int(x2), int(y2)), (255, 0, 0), 2)
-                        
-        # Save the annotated image
+                    
         if not os.path.exists(output_folder):
             os.makedirs(output_folder)
             
         annotated_image_path = os.path.join(output_folder, "annotated_" + os.path.basename(image_path))
         cv2.imwrite(annotated_image_path, image)
         print(f"Annotated image saved to: {annotated_image_path}")
+
+        time.sleep(1)
+        gc.collect()
     
     except Exception as e:
         with open(log_file, 'a') as log:
             log.write(f"Error processing {image_path}: {str(e)}\n")
         print(f"Error processing {image_path}: {str(e)}")
+        
+def process_image(image_path, output_folder, log_file):
+    detect_and_recognize(image_path, output_folder, log_file)
+    gc.collect() 
 
+"""
+process_folder will process the images in the input folder using the multiprocessing and will log the inference times. 
+"""
 def process_folder(input_folder, output_folder, log_file):
     image_extensions = {'.jpg', '.jpeg', '.png', '.bmp'}
     images = [f for f in os.listdir(input_folder) if any(f.lower().endswith(ext) for ext in image_extensions)]
     
-    for image_path in tqdm(images, desc="Processing images"):
-        full_image_path = os.path.join(input_folder, image_path)
-        detect_and_recognize(full_image_path, output_folder, log_file)
+    with mp.Pool(mp.cpu_count()) as pool:
+        for image_path in tqdm(images, desc="Processing images"):
+            full_image_path = os.path.join(input_folder, image_path)
+            pool.apply_async(process_image, args=(full_image_path, output_folder, log_file))
+        pool.close()
+        pool.join()
     
-    # Calculate and display average inference times
     avg_vehicle_time = sum(vehicle_inference_times) / len(vehicle_inference_times) if vehicle_inference_times else 0
     avg_plate_time = sum(plate_inference_times) / len(plate_inference_times) if plate_inference_times else 0
     avg_ocr_time = sum(ocr_inference_times) / len(ocr_inference_times) if ocr_inference_times else 0
