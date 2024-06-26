@@ -3,9 +3,8 @@
 *.webp
 *.mp4
 *.mov
-*.pt
+yolov8n.pt
 *.txt
-*.weights
 venv
 gui.py
 lpdetect_video.py
