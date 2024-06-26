@@ -244,4 +244,7 @@ output_folder = 'output'
 cropped_folder = 'cropped'
 log_file = 'detection_log.txt'
 
+if not os.path.exists(input_folder):
+    os.makedirs(input_folder)
+    
 process_folder(input_folder, output_folder, cropped_folder, log_file)
