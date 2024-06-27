@@ -2,23 +2,26 @@ import cv2
 import numpy as np
 import os
 import easyocr
+import time
 
 config_path = 'cfg/yolov4-tiny.cfg'
 weights_path = 'custom-yolov4-tiny-detector_last.weights'
 names_path = 'cfg/obj.names'
 input_folder = 'input'
 output_folder = 'output'
+cropped_folder = 'cropped'
+log_file = 'detection_log_rpi.txt'
 
 if not os.path.exists(config_path):
-    print(f"Erreur: fichier de configuration non trouvé: {config_path}")
+    print(f"Error: cfg file not found {config_path}")
     exit(1)
 
 if not os.path.exists(weights_path):
-    print(f"Erreur: fichier de poids non trouvé: {weights_path}")
+    print(f"Error: weights file not found {weights_path}")
     exit(1)
 
 if not os.path.exists(names_path):
-    print(f"Erreur: fichier de noms non trouvé: {names_path}")
+    print(f"Error: .names file not found {names_path}")
     exit(1)
 
 # Load the network and the weights
@@ -32,6 +35,14 @@ reader = easyocr.Reader(['en'])
 if not os.path.exists(output_folder):
     os.makedirs(output_folder)
 
+if not os.path.exists(cropped_folder):
+    os.makedirs(cropped_folder)
+
+# Initialize log file
+with open(log_file, mode='w') as log:
+    log.write("Image Processing Log\n")
+    log.write("====================\n\n")
+
 # iterate through the folder 
 for filename in os.listdir(input_folder):
     if filename.endswith(".jpg") or filename.endswith(".png"):
@@ -42,9 +53,13 @@ for filename in os.listdir(input_folder):
         img = cv2.imread(image_path)
         height, width, _ = img.shape
         blob = cv2.dnn.blobFromImage(img, 0.00392, (416, 416), (0, 0, 0), True, crop=False)
+        
+        # measure lp detection time
+        start_lp_time = time.time()
         net.setInput(blob)
         outs = net.forward(net.getUnconnectedOutLayersNames())
-
+        vehicle_lp_time = (time.time() - start_lp_time) * 1000  # in milliseconds
+        
         # reusult analysis
         class_ids = []
         confidences = []
@@ -54,7 +69,7 @@ for filename in os.listdir(input_folder):
                 scores = detection[5:]
                 class_id = np.argmax(scores)
                 confidence = scores[class_id]
-                if confidence > 0.5: # you can lower or higher this value depending on the accuracy you want 
+                if confidence > 0.5:  # you can lower or higher this value depending on the accuracy you want 
                     center_x = int(detection[0] * width)
                     center_y = int(detection[1] * height)
                     w = int(detection[2] * width)
@@ -78,7 +93,16 @@ for filename in os.listdir(input_folder):
                         
                         # extract cropped image text
                         crop_img = img[y:y+h, x:x+w]
+                        
+                        # Save the cropped license plate image
+                        plate_filename = os.path.join(cropped_folder, f"plate_{filename}")
+                        cv2.imwrite(plate_filename, crop_img)
+
+                        # Measure plate detection and OCR time
+                        start_ocr_time = time.time()
                         ocr_result = reader.readtext(crop_img)
+                        ocr_time = (time.time() - start_ocr_time) * 1000  # in milliseconds
+                        
                         ocr_text = " ".join([res[1] for res in ocr_result])
 
                         # annotation
@@ -89,6 +113,13 @@ for filename in os.listdir(input_folder):
                         if ocr_text_position_y + 30 > height:  # if ocr annotation overlaps, change its position upper
                             ocr_text_position_y = y - 30
                         cv2.putText(img, ocr_text, (x, ocr_text_position_y), cv2.FONT_HERSHEY_PLAIN, 2, color, 2)
+
+                        # Log timings
+                        with open(log_file, 'a') as log:
+                            log.write(f"Processed {image_path}:\n")
+                            log.write(f"  LP detection time: {vehicle_lp_time:.2f} ms\n")
+                            log.write(f"  OCR time: {ocr_time:.2f} ms\n")
+                            log.write(f"  Detected plate: {ocr_text}\n\n")
 
         cv2.imwrite(output_image_path, img)
         print(f"Image processed and saved at: {output_image_path}")
