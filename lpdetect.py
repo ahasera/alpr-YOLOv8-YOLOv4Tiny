@@ -75,25 +75,25 @@ detect_and_recognize will first :
     12. Handle and log any exceptions that occur during the processing of the image.
 """
 
-vehicle_inference_times = []
-plate_inference_times = []
-ocr_inference_times = []
+def format_inference_time(start_time):
+    end_time = time.time()
+    inference_time = (end_time - start_time) * 1000  # Convert to milliseconds
+    return f"{inference_time:.2f}"
 
 def detect_and_recognize(image_path, output_folder, cropped_folder, log_file):
     try:
         image = cv2.imread(image_path)
         
-        # Measure vehicle detection time
-        start_time = time.time()
-        results_vehicle = model_vehicle(image)
-        vehicle_time = (time.time() - start_time) * 1000  # in milliseconds
-        vehicle_inference_times.append(vehicle_time)
         
         used_positions = []
         
         with open(log_file, 'a') as log:
             log.write(f"Processing {image_path}:\n")
-        
+            # Measure vehicle detection time
+            start_time = time.time()
+            results_vehicle = model_vehicle(image)
+            vehicle_time = format_inference_time(start_time)
+            log.write(f"Vehicle detection time: {vehicle_time} ms\n")
             vehicle_detected = False
             
             for result in results_vehicle:
@@ -107,8 +107,8 @@ def detect_and_recognize(image_path, output_folder, cropped_folder, log_file):
                         # Measure plate detection time
                         start_time = time.time()
                         results_plate = model_plate(vehicle)
-                        plate_time = (time.time() - start_time) * 1000  # in milliseconds
-                        plate_inference_times.append(plate_time)
+                        plate_time = format_inference_time(start_time)
+                        log.write(f"Plate detection time: {plate_time} ms\n")
                         
                         for result_plate in results_plate:
                             for bbox_plate in result_plate.boxes.data.tolist():
@@ -123,8 +123,8 @@ def detect_and_recognize(image_path, output_folder, cropped_folder, log_file):
                                 # Measure OCR time
                                 start_time = time.time()
                                 ocr_result = reader.readtext(plate)
-                                ocr_time = (time.time() - start_time) * 1000  # in milliseconds
-                                ocr_inference_times.append(ocr_time)
+                                ocr_time = format_inference_time(start_time)
+                                log.write(f"OCR time: {ocr_time} ms\n")
                                 
                                 """
                                 this for loop will annotate each image
@@ -155,8 +155,8 @@ def detect_and_recognize(image_path, output_folder, cropped_folder, log_file):
             if not vehicle_detected: # will allow to run the second model if the first one did not detect a vehicle. Can cause problm in some situations with many objects nearby
                 start_time = time.time()
                 results_plate = model_plate(image)
-                plate_time = (time.time() - start_time) * 1000  # in milliseconds
-                plate_inference_times.append(plate_time)
+                plate_time = format_inference_time(start_time)
+                log.write(f"Plate detection time (full image): {plate_time} ms\n")
                 
                 for result_plate in results_plate:
                     for bbox_plate in result_plate.boxes.data.tolist():
@@ -171,8 +171,8 @@ def detect_and_recognize(image_path, output_folder, cropped_folder, log_file):
                         # Measure OCR time
                         start_time = time.time()
                         ocr_result = reader.readtext(plate)
-                        ocr_time = (time.time() - start_time) * 1000  # in milliseconds
-                        ocr_inference_times.append(ocr_time)
+                        ocr_time = format_inference_time(start_time)
+                        log.write(f"OCR time: {ocr_time} ms\n")
                         
                         # OCR annotation on the input image
                         for (bbox_ocr, text, prob) in ocr_result:
@@ -230,15 +230,6 @@ def process_folder(input_folder, output_folder, cropped_folder, log_file):
         pool.close()
         pool.join()
     
-    avg_vehicle_time = sum(vehicle_inference_times) / len(vehicle_inference_times) if vehicle_inference_times else 0
-    avg_plate_time = sum(plate_inference_times) / len(plate_inference_times) if plate_inference_times else 0
-    avg_ocr_time = sum(ocr_inference_times) / len(ocr_inference_times) if ocr_inference_times else 0
-
-    print(f"\nAverage inference times (in ms):")
-    print(f"Vehicle detection: {avg_vehicle_time:.2f} ms")
-    print(f"Plate detection: {avg_plate_time:.2f} ms")
-    print(f"OCR: {avg_ocr_time:.2f} ms")
-
 input_folder = 'input'
 output_folder = 'output'
 cropped_folder = 'cropped'
