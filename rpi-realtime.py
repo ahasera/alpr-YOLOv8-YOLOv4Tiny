@@ -5,20 +5,23 @@ from picamera2 import Picamera2
 import time
 import threading
 
-# Paths to configuration and weight files
+""""
+The yolov4-tiny.cfg IS NOT the default one. It has been adapted to correctly match my model classes. 
+As there is only 1 class, I updated the filters using the formula given in the Darknet Repo (YOLOV4Tiny Darknet): (nbclass+5)x3 which in my case gets us to 18.
+"""
 config_path = 'cfg/yolov4-tiny.cfg'
-weights_path = 'custom-yolov4-tiny-detector_last.weights'
+weights_path = 'models/yolov4-tiny/custom-yolov4-tiny-detector_last.weights'
 names_path = 'cfg/obj.names'
 
-# Load YOLO network and class names
+# Load the network weights and classes
 net = cv2.dnn.readNet(weights_path, config_path)
 with open(names_path, 'r') as f:
     classes = f.read().splitlines()
 
-# Initialize EasyOCR reader
+# Initialize EasyOCR
 reader = easyocr.Reader(['en'])
 
-# Initialize and configure camera
+# Initialize the raspberry pi camera module with picamera2  
 picam2 = Picamera2()
 config = picam2.create_still_configuration(main={"size": (1280, 720)}, lores={"size": (640, 480)}, display="lores")
 picam2.preview_configuration.main.format = "RGB888"
