@@ -13,13 +13,13 @@ First one is pretrained coco model
 Second one is yours or mine, for license plate object detection. 
 """
 try:
-    model_vehicle = YOLO('yolov8n.pt')
+    model_vehicle = YOLO('models/yolov8/yolov8n.pt')
 except Exception as e:
     print(f"Error while loading yolov8n base model: {e}")
     exit(1)
 
 try:
-    model_plate = YOLO('best.pt')  # YoloV8 model for plate detection 
+    model_plate = YOLO('models/yolov8/best.pt')  # YoloV8 model for plate detection 
 except Exception as e:
     print(f"Error while loading license-plate model: {e}")
     exit(1)
@@ -230,9 +230,9 @@ def process_folder(input_folder, output_folder, cropped_folder, log_file):
         pool.close()
         pool.join()
     
-input_folder = 'input'
-output_folder = 'output'
-cropped_folder = 'cropped'
+input_folder = 'data/input'
+output_folder = 'data/output'
+cropped_folder = 'data/cropped'
 log_file = 'detection_log.txt'
 
 if not os.path.exists(input_folder):

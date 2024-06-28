@@ -5,11 +5,11 @@ import easyocr
 import time
 
 config_path = 'cfg/yolov4-tiny.cfg'
-weights_path = 'custom-yolov4-tiny-detector_last.weights'
+weights_path = 'models/yolov4-tiny/custom-yolov4-tiny-detector_last.weights'
 names_path = 'cfg/obj.names'
-input_folder = 'input'
-output_folder = 'output'
-cropped_folder = 'cropped'
+input_folder = 'data/input'
+output_folder = 'data/output'
+cropped_folder = 'data/cropped'
 log_file = 'detection_log_rpi.txt'
 
 if not os.path.exists(config_path):
