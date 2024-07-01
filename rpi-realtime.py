@@ -14,12 +14,13 @@ As there is only 1 class, I updated the filters using the formula given in the D
 
 parser = argparse.ArgumentParser(description="Real-time object detection and OCR with YOLOv4-tiny and EasyOCR.")
 parser.add_argument('--export', type=str, help='Directory to export annotated images and OCR results.')
+parser.add_argument('--no-skip', action='store_true', help='Perform on every frame without skipping. /!\ will decrease performance significantly')
 args = parser.parse_args()
 
 config_path = 'cfg/yolov4-tiny.cfg'
 weights_path = 'models/yolov4-tiny/custom-yolov4-tiny-detector_last.weights'
 names_path = 'cfg/obj.names'
-
+CONFIDENCE_THRESHOLD = 0.3 # higher or lower the confidence if you want more detections, less accurate or revert 
 # Load the network weights and classes
 net = cv2.dnn.readNet(weights_path, config_path)
 with open(names_path, 'r') as f:
@@ -29,9 +30,9 @@ with open(names_path, 'r') as f:
 reader = easyocr.Reader(['en'])
 
 # Initialize the raspberry pi camera module with picamera2  
-picam2 = Picamera2()
-config = picam2.create_still_configuration(main={"size": (1640, 1080)}, lores={"size": (640, 480)}, display="lores")
-picam2.preview_configuration.main.format = "RGB888"
+picam2 = Picamera2() 
+config = picam2.create_still_configuration(main={"size": (640, 480)}, lores={"size": (320, 240)}, display="lores") # change res here
+picam2.preview_configuration.main.format = "XRGB8888"
 picam2.configure(config)
 picam2.start()
 
@@ -42,11 +43,17 @@ time.sleep(1)  # Allow camera to adjust
 frame = None
 results = None
 lock = threading.Lock()
-frame_skip = 5 
+frame_skip = 10 if not args.no_skip else 1
 frame_counter = 0
+last_saved_time = 0
+save_interval = 5  # Save only if more than 5 seconds have passed since the last save
+last_saved_results = None
+
 
 def save_results(export_dir, frame, results):
-    if results:  # Ensure results is not None
+    global last_saved_time, last_saved_results
+    current_time = time.time()
+    if current_time - last_saved_time > save_interval and results_changed(results, last_saved_results):
         timestamp = time.strftime("%Y%m%d-%H%M%S")
         img_path = os.path.join(export_dir, f"annotated_{timestamp}.png")
         txt_path = os.path.join(export_dir, f"ocr_{timestamp}.txt")
@@ -57,6 +64,27 @@ def save_results(export_dir, frame, results):
                 f.write(f"Label: {label}, Confidence: {confidence}\n")
                 f.write(f"OCR Text: {ocr_text}\n\n")
 
+        last_saved_time = current_time
+        last_saved_results = results
+
+def results_changed(new_results, last_results):
+    if last_results is None:
+        return True
+    if len(new_results) != len(last_results):
+        return True
+    for new, last in zip(new_results, last_results):
+        if new[:6] != last[:6]:
+            return True
+    return False
+
+def preprocess_for_ocr(image):
+    # grey level conversion
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    # binarization
+    _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    # denoise
+    denoised = cv2.fastNlMeansDenoising(binary)
+    return denoised            
 
 # Frame processing thread
 def process_frame():
@@ -69,7 +97,7 @@ def process_frame():
         height, width, _ = img.shape
 
         # Pre-process image and perform YOLO inference
-        blob = cv2.dnn.blobFromImage(img, 0.00392, (320, 320), (0, 0, 0), True, crop=False)
+        blob = cv2.dnn.blobFromImage(img, 0.00392, (416, 416), (0, 0, 0), True, crop=False)
         net.setInput(blob)
         outs = net.forward(net.getUnconnectedOutLayersNames())
 
@@ -80,7 +108,7 @@ def process_frame():
                 scores = detection[5:]
                 class_id = np.argmax(scores)
                 confidence = scores[class_id]
-                if confidence > 0.5:
+                if confidence > CONFIDENCE_THRESHOLD:
                     center_x = int(detection[0] * width)
                     center_y = int(detection[1] * height)
                     w = int(detection[2] * width)
@@ -104,7 +132,8 @@ def process_frame():
 
                     # Perform OCR on detected box
                     crop_img = img[y:y+h, x:x+w]
-                    ocr_result = reader.readtext(crop_img)
+                    preprocessed_crop = preprocess_for_ocr(crop_img)
+                    ocr_result = reader.readtext(preprocessed_crop)
                     ocr_text = " ".join([res[1] for res in ocr_result])
 
                     new_results.append((x, y, w, h, label, confidence, ocr_text, color))
@@ -116,7 +145,6 @@ def process_frame():
 thread = threading.Thread(target=process_frame)
 thread.daemon = True
 thread.start()
-
 prev_time = time.time()
 
 # Main loop for capturing and displaying frames
@@ -144,7 +172,7 @@ while True:
     cv2.putText(display_frame, f"FPS: {int(fps)}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
 
     cv2.imshow("Annotated Image", display_frame)
-
+        
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
@@ -152,6 +180,5 @@ while True:
     if frame_counter % frame_skip == 0:
         with lock:
             frame = display_frame
-
 picam2.stop()
 cv2.destroyAllWindows()
