@@ -4,11 +4,18 @@ import easyocr
 from picamera2 import Picamera2
 import time
 import threading
+import argparse 
+import os
 
 """"
 The yolov4-tiny.cfg IS NOT the default one. It has been adapted to correctly match my model classes. 
 As there is only 1 class, I updated the filters using the formula given in the Darknet Repo (YOLOV4Tiny Darknet): (nbclass+5)x3 which in my case gets us to 18.
 """
+
+parser = argparse.ArgumentParser(description="Real-time object detection and OCR with YOLOv4-tiny and EasyOCR.")
+parser.add_argument('--export', type=str, help='Directory to export annotated images and OCR results.')
+args = parser.parse_args()
+
 config_path = 'cfg/yolov4-tiny.cfg'
 weights_path = 'models/yolov4-tiny/custom-yolov4-tiny-detector_last.weights'
 names_path = 'cfg/obj.names'
@@ -23,7 +30,7 @@ reader = easyocr.Reader(['en'])
 
 # Initialize the raspberry pi camera module with picamera2  
 picam2 = Picamera2()
-config = picam2.create_still_configuration(main={"size": (1280, 720)}, lores={"size": (640, 480)}, display="lores")
+config = picam2.create_still_configuration(main={"size": (1640, 1080)}, lores={"size": (640, 480)}, display="lores")
 picam2.preview_configuration.main.format = "RGB888"
 picam2.configure(config)
 picam2.start()
@@ -37,6 +44,19 @@ results = None
 lock = threading.Lock()
 frame_skip = 5 
 frame_counter = 0
+
+def save_results(export_dir, frame, results):
+    if results:  # Ensure results is not None
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        img_path = os.path.join(export_dir, f"annotated_{timestamp}.png")
+        txt_path = os.path.join(export_dir, f"ocr_{timestamp}.txt")
+
+        cv2.imwrite(img_path, frame)
+        with open(txt_path, 'w') as f:
+            for (x, y, w, h, label, confidence, ocr_text, color) in results:
+                f.write(f"Label: {label}, Confidence: {confidence}\n")
+                f.write(f"OCR Text: {ocr_text}\n\n")
+
 
 # Frame processing thread
 def process_frame():
@@ -71,7 +91,7 @@ def process_frame():
                     confidences.append(float(confidence))
                     class_ids.append(class_id)
 
-        # Apply Non-Maximum Suppression (NMS)
+        # Apply Non-Maximum Suppression (NMS) to prevent multi-boxes overlapping eachother
         new_results = []
         if class_ids:
             indexes = cv2.dnn.NMSBoxes(boxes, confidences, 0.5, 0.4)
@@ -107,25 +127,24 @@ while True:
         display_frame = frame.copy()
         current_results = results
 
-    # Annotate and display results
-    if current_results:
+    if current_results:  # Ensure current_results is not None
         for (x, y, w, h, label, confidence, ocr_text, color) in current_results:
             cv2.rectangle(display_frame, (x, y), (x + w, y + h), color, 2)
             cv2.putText(display_frame, label + " " + str(round(confidence, 2)), (x, y - 10), cv2.FONT_HERSHEY_PLAIN, 1, color, 2)
             ocr_text_position_y = y + h + 20
             if ocr_text_position_y + 30 > display_frame.shape[0]:
                 ocr_text_position_y = y - 30
-            cv2.putText(display_frame, ocr_text, (x, ocr_text_position_y), cv2.FONT_HERSHEY_PLAIN, 4, color, 2) 
-            # cv2.putText(display_frame, ocr_text, (x,ocr_text_position_y), cv2.FONT_HERSHEY_PLAIN, TEXT_SIZE(INT), color, (INT))
+            cv2.putText(display_frame, ocr_text, (x, ocr_text_position_y), cv2.FONT_HERSHEY_PLAIN, 4, color, 2)
 
-    # Calculate and display FPS
+        if args.export:
+            save_results(args.export, display_frame, current_results)
+
     end_time = time.time()
     fps = 1 / (end_time - start_time)
     cv2.putText(display_frame, f"FPS: {int(fps)}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
 
     cv2.imshow("Annotated Image", display_frame)
 
-    # Exit on 'q' key press
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 

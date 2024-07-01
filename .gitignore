@@ -8,6 +8,7 @@ yolov8n.pt
 venv
 gui.py
 lpdetect_video.py
+lpdetect-gpu.py
 veenv
 picam
 ncnn
