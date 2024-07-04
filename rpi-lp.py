@@ -3,6 +3,12 @@ import numpy as np
 import os
 import easyocr
 import time
+import argparse
+from preprocessing import preprocess_image
+
+parser = argparse.ArgumentParser(description='Process images for OCR and object detection.')
+parser.add_argument('--preprocess', action='store_true', help='Apply preprocessing to images before detection')
+args = parser.parse_args()
 
 config_path = 'cfg/yolov4-tiny.cfg'
 weights_path = 'models/yolov4-tiny/custom-yolov4-tiny-detector_last.weights'
@@ -51,7 +57,18 @@ for filename in os.listdir(input_folder):
 
         # charge image and pre-process 
         img = cv2.imread(image_path)
-        height, width, _ = img.shape
+        if img is None:
+            print(f"Error reading image {image_path}")
+            continue
+
+        if args.preprocess:
+            try:
+                img = preprocess_image(image_path)  # Apply preprocessing
+            except ValueError as e:
+                print(f"Error processing {image_path}: {e}")
+                continue
+
+        height, width = img.shape[:2]
         blob = cv2.dnn.blobFromImage(img, 0.00392, (416, 416), (0, 0, 0), True, crop=False)
         
         # measure lp detection time

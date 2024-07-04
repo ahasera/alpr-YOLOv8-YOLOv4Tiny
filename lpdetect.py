@@ -6,6 +6,12 @@ from tqdm import tqdm
 import time
 import gc
 import multiprocessing as mp
+import argparse
+from preprocessing import preprocess_image  
+# Parse arguments
+parser = argparse.ArgumentParser(description='Vehicle and License Plate Detection with optional preprocessing')
+parser.add_argument('--preprocess', action='store_true', help='Enable preprocessing of images')
+args = parser.parse_args()
 
 """
 YoloV8 model initialisation 
@@ -62,17 +68,18 @@ def adjust_text_position(image, text_x, text_y, text, font_scale, thickness, use
 detect_and_recognize will first : 
 
     1. Read the image from the provided image_path.
-    2. Use the YOLOv8 model trained on the COCO dataset to detect vehicles in the image.
-    3. For each detected vehicle, crop the vehicle region from the image.
-    4. Use the specialized YOLOv8 model to detect license plates within the cropped vehicle image.
-    5. For each detected license plate, crop the license plate region from the vehicle image.
-    6. Save the cropped license plate image to the cropped folder.
-    7. Use EasyOCR to perform optical character recognition (OCR) on the cropped license plate image.
-    8. Annotate the original image with bounding boxes around detected vehicles and license plates, and add the recognized text with confidence scores.
-    9. Adjust the text position to avoid overlapping with other annotations and ensure readability.
-    10. Save the annotated image to the specified output folder.
-    11. Log the results of the OCR, including the recognized text and confidence scores, to the provided log file.
-    12. Handle and log any exceptions that occur during the processing of the image.
+    2. Optionally preprocess the image.
+    3. Use the YOLOv8 model trained on the COCO dataset to detect vehicles in the image.
+    4. For each detected vehicle, crop the vehicle region from the image.
+    5. Use the specialized YOLOv8 model to detect license plates within the cropped vehicle image.
+    6. For each detected license plate, crop the license plate region from the vehicle image.
+    7. Save the cropped license plate image to the cropped folder.
+    8. Use EasyOCR to perform optical character recognition (OCR) on the cropped license plate image.
+    9. Annotate the original image with bounding boxes around detected vehicles and license plates, and add the recognized text with confidence scores.
+    10. Adjust the text position to avoid overlapping with other annotations and ensure readability.
+    11. Save the annotated image to the specified output folder.
+    12. Log the results of the OCR, including the recognized text and confidence scores, to the provided log file.
+    13. Handle and log any exceptions that occur during the processing of the image.
 """
 
 def format_inference_time(start_time):
@@ -80,10 +87,13 @@ def format_inference_time(start_time):
     inference_time = (end_time - start_time) * 1000  # Convert to milliseconds
     return f"{inference_time:.2f}"
 
-def detect_and_recognize(image_path, output_folder, cropped_folder, log_file):
+def detect_and_recognize(image_path, output_folder, cropped_folder, log_file, preprocess):
     try:
-        image = cv2.imread(image_path)
-        
+        # Read and optionally preprocess the image with --preprocess
+        if preprocess:
+            image = preprocess_image(image_path)
+        else:
+            image = cv2.imread(image_path)
         
         used_positions = []
         
@@ -193,7 +203,7 @@ def detect_and_recognize(image_path, output_folder, cropped_folder, log_file):
                         # detection annotation on input image
                         cv2.rectangle(image, (int(x1), int(y1)),
                                       (int(x2), int(y2)), (255, 0, 0), 2)
-                    
+                        
         if not os.path.exists(output_folder):
             os.makedirs(output_folder)
             
@@ -208,15 +218,15 @@ def detect_and_recognize(image_path, output_folder, cropped_folder, log_file):
         with open(log_file, 'a') as log:
             log.write(f"Error processing {image_path}: {str(e)}\n")
         print(f"Error processing {image_path}: {str(e)}")
-        
-def process_image(image_path, output_folder, cropped_folder, log_file):
-    detect_and_recognize(image_path, output_folder, cropped_folder, log_file)
+
+def process_image(image_path, output_folder, cropped_folder, log_file, preprocess):
+    detect_and_recognize(image_path, output_folder, cropped_folder, log_file, preprocess)
     gc.collect() 
 
 """
 process_folder will process the images in the input folder using the multiprocessing and will log the inference times. 
 """
-def process_folder(input_folder, output_folder, cropped_folder, log_file):
+def process_folder(input_folder, output_folder, cropped_folder, log_file, preprocess):
     image_extensions = {'.jpg', '.jpeg', '.png', '.bmp'}
     images = [f for f in os.listdir(input_folder) if any(f.lower().endswith(ext) for ext in image_extensions)]
     
@@ -226,7 +236,7 @@ def process_folder(input_folder, output_folder, cropped_folder, log_file):
     with mp.Pool(mp.cpu_count()) as pool:
         for image_path in tqdm(images, desc="Processing images"):
             full_image_path = os.path.join(input_folder, image_path)
-            pool.apply_async(process_image, args=(full_image_path, output_folder, cropped_folder, log_file))
+            pool.apply_async(process_image, args=(full_image_path, output_folder, cropped_folder, log_file, preprocess))
         pool.close()
         pool.join()
     
@@ -238,4 +248,4 @@ log_file = 'detection_log.txt'
 if not os.path.exists(input_folder):
     os.makedirs(input_folder)
     
-process_folder(input_folder, output_folder, cropped_folder, log_file)
+process_folder(input_folder, output_folder, cropped_folder, log_file, args.preprocess)
