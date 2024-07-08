@@ -34,7 +34,7 @@ if not os.path.exists(names_path):
 net = cv2.dnn.readNet(weights_path, config_path)
 with open(names_path, 'r') as f:
     classes = f.read().splitlines()
-    
+
 # EasyOCR init 
 reader = easyocr.Reader(['en'])
 
@@ -48,6 +48,12 @@ if not os.path.exists(cropped_folder):
 with open(log_file, mode='w') as log:
     log.write("Image Processing Log\n")
     log.write("====================\n\n")
+
+# Function to format inference time
+def format_inference_time(start_time):
+    end_time = time.time()
+    inference_time = (end_time - start_time) * 1000  # Convert to milliseconds
+    return f"{inference_time:.2f}"
 
 # iterate through the folder 
 for filename in os.listdir(input_folder):
@@ -70,14 +76,14 @@ for filename in os.listdir(input_folder):
 
         height, width = img.shape[:2]
         blob = cv2.dnn.blobFromImage(img, 0.00392, (416, 416), (0, 0, 0), True, crop=False)
-        
+
         # measure lp detection time
         start_lp_time = time.time()
         net.setInput(blob)
         outs = net.forward(net.getUnconnectedOutLayersNames())
-        vehicle_lp_time = (time.time() - start_lp_time) * 1000  # in milliseconds
-        
-        # reusult analysis
+        vehicle_lp_time = format_inference_time(start_lp_time)
+
+        # result analysis
         class_ids = []
         confidences = []
         boxes = []
@@ -107,10 +113,10 @@ for filename in os.listdir(input_folder):
                         label = str(classes[class_ids[i]])
                         confidence = confidences[i]
                         color = (0, 255, 0)
-                        
+
                         # extract cropped image text
                         crop_img = img[y:y+h, x:x+w]
-                        
+
                         # Save the cropped license plate image
                         plate_filename = os.path.join(cropped_folder, f"plate_{filename}")
                         cv2.imwrite(plate_filename, crop_img)
@@ -118,14 +124,14 @@ for filename in os.listdir(input_folder):
                         # Measure plate detection and OCR time
                         start_ocr_time = time.time()
                         ocr_result = reader.readtext(crop_img)
-                        ocr_time = (time.time() - start_ocr_time) * 1000  # in milliseconds
-                        
-                        ocr_text = " ".join([res[1] for res in ocr_result])
+                        ocr_time = format_inference_time(start_ocr_time)
+
+                        ocr_text = " ".join([f"{res[1]} ({res[2]:.2f})" for res in ocr_result])
 
                         # annotation
                         cv2.rectangle(img, (x, y), (x + w, y + h), color, 2)
                         cv2.putText(img, label + " " + str(round(confidence, 2)), (x, y - 10), cv2.FONT_HERSHEY_PLAIN, 1, color, 2)
-                        
+
                         ocr_text_position_y = y + h + 20
                         if ocr_text_position_y + 30 > height:  # if ocr annotation overlaps, change its position upper
                             ocr_text_position_y = y - 30
@@ -134,8 +140,8 @@ for filename in os.listdir(input_folder):
                         # Log timings
                         with open(log_file, 'a') as log:
                             log.write(f"Processed {image_path}:\n")
-                            log.write(f"  LP detection time: {vehicle_lp_time:.2f} ms\n")
-                            log.write(f"  OCR time: {ocr_time:.2f} ms\n")
+                            log.write(f"  LP detection time: {vehicle_lp_time} ms\n")
+                            log.write(f"  OCR time: {ocr_time} ms\n")
                             log.write(f"  Detected plate: {ocr_text}\n\n")
 
         cv2.imwrite(output_image_path, img)
