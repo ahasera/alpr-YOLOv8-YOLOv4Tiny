@@ -6,6 +6,7 @@ import time
 import threading
 import argparse 
 import os
+#Picamera2.set_logging(Picamera2.DEBUG)
 
 """"
 The yolov4-tiny.cfg IS NOT the default one. It has been adapted to correctly match my model classes. 
@@ -31,12 +32,13 @@ reader = easyocr.Reader(['en'])
 
 # Initialize the raspberry pi camera module with picamera2  
 picam2 = Picamera2() 
-config = picam2.create_still_configuration(main={"size": (640, 480)}, lores={"size": (320, 240)}, display="lores") # change res here
+config = picam2.create_still_configuration(main={"size": (640, 480)}, buffer_count=8, lores={"size": (320, 240)}, display="lores") # change res here
+picam2.create_preview_configuration(queue=False)
 picam2.preview_configuration.main.format = "XRGB8888"
 picam2.configure(config)
 picam2.start()
 
-time.sleep(1)  # Allow camera to adjust
+time.sleep(2)  # Allow camera to adjust
 
 # Initialize shared variables and synchronization primitives
 # lower or higher the frame_skip value to respectively lower or higher the annotation refresh rate
@@ -123,7 +125,7 @@ def process_frame():
         new_results = []
         if class_ids:
             indexes = cv2.dnn.NMSBoxes(boxes, confidences, 0.5, 0.4)
-            if indexes:
+            if isinstance(indexes, np.ndarray) and indexes.size > 0:
                 for i in indexes.flatten():
                     x, y, w, h = boxes[i]
                     label = str(classes[class_ids[i]])
@@ -162,7 +164,7 @@ while True:
             ocr_text_position_y = y + h + 20
             if ocr_text_position_y + 30 > display_frame.shape[0]:
                 ocr_text_position_y = y - 30
-            cv2.putText(display_frame, ocr_text, (x, ocr_text_position_y), cv2.FONT_HERSHEY_PLAIN, 4, color, 2)
+            cv2.putText(display_frame, ocr_text, (x, ocr_text_position_y), cv2.FONT_HERSHEY_PLAIN, 3, color, 2) # change annotation color and size here
 
         if args.export:
             save_results(args.export, display_frame, current_results)
