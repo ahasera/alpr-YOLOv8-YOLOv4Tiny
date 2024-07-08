@@ -40,7 +40,8 @@ reader = easyocr.Reader(['en'])
 
 if not os.path.exists(output_folder):
     os.makedirs(output_folder)
-
+if not os.path.exists(input_folder):
+    os.makedirs(input_folder)
 if not os.path.exists(cropped_folder):
     os.makedirs(cropped_folder)
 
