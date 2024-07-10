@@ -114,10 +114,10 @@ The dataset we used for training is available on the roboflow universe [here](ht
 
 # Demo
 ### Batch YOLOv8
-![enter image description here](https://s12.gifyu.com/images/StqKU.gif)
+![batch-yolov8-demo](https://s12.gifyu.com/images/StqKU.gif)
 
 ### Live Realtime on RaspberryPi4 
 
-![enter image description here](https://s10.gifyu.com/images/StqNl.gif)
+![realtime-demo](https://s10.gifyu.com/images/StqNl.gif)
 # License
 This project is licensed under the GNU v3.0 License - see the [LICENSE.md](LICENSE.md) file for details.
