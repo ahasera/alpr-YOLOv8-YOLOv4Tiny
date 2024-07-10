@@ -7,10 +7,18 @@ import time
 import gc
 import multiprocessing as mp
 import argparse
-from preprocessing import preprocess_image  
+from preprocessing import preprocess_image
+import logging
+from concurrent.futures import ProcessPoolExecutor, as_completed
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 # Parse arguments
 parser = argparse.ArgumentParser(description='Vehicle and License Plate Detection with optional preprocessing')
 parser.add_argument('--preprocess', action='store_true', help='Enable preprocessing of images')
+parser.add_argument('--confidence', type=float, default=0.5, help='Confidence threshold for detection')
+parser.add_argument('--input-size', type=int, default=416, help='Input size for YOLO models')
 args = parser.parse_args()
 
 """
@@ -21,21 +29,16 @@ Second one is yours or mine, for license plate object detection.
 try:
     model_vehicle = YOLO('models/yolov8/yolov8n.pt')
 except Exception as e:
-    print(f"Error while loading yolov8n base model: {e}")
+    logging.error(f"Error while loading yolov8n base model: {e}")
     exit(1)
 
 try:
     model_plate = YOLO('models/yolov8/best.pt')  # YoloV8 model for plate detection 
 except Exception as e:
-    print(f"Error while loading license-plate model: {e}")
+    logging.error(f"Error while loading license-plate model: {e}")
     exit(1)
     
 reader = easyocr.Reader(['en'])
-
-"""
-The adjust_text_position is here to prevent text going over each other 
---> made to simplify the reading of the easyocr results, as they can be multiple results for 1 plate (with additional characters being recognized, in different orders)
-"""
 
 def adjust_text_position(image, text_x, text_y, text, font_scale, thickness, used_positions):
     """
@@ -63,13 +66,12 @@ def adjust_text_position(image, text_x, text_y, text, font_scale, thickness, use
     
     used_positions.append((text_x, text_y))
     return text_x, text_y
-
 """
 detect_and_recognize will first : 
 
     1. Read the image from the provided image_path.
     2. Optionally preprocess the image.
-    3. Use the YOLOv8 model trained on the COCO dataset to detect vehicles in the image.
+    3. Use the YOLOv8 model trained on the COCO dataset to detect vehicles in the image. If no vehicles are detected, proceed to step 5 using the full image.
     4. For each detected vehicle, crop the vehicle region from the image.
     5. Use the specialized YOLOv8 model to detect license plates within the cropped vehicle image.
     6. For each detected license plate, crop the license plate region from the vehicle image.
@@ -81,19 +83,21 @@ detect_and_recognize will first :
     12. Log the results of the OCR, including the recognized text and confidence scores, to the provided log file.
     13. Handle and log any exceptions that occur during the processing of the image.
 """
-
 def format_inference_time(start_time):
     end_time = time.time()
     inference_time = (end_time - start_time) * 1000  # Convert to milliseconds
     return f"{inference_time:.2f}"
 
-def detect_and_recognize(image_path, output_folder, cropped_folder, log_file, preprocess):
+def detect_and_recognize(image_path, output_folder, cropped_folder, log_file, args):
     try:
         # Read and optionally preprocess the image with --preprocess
-        if preprocess:
+        if args.preprocess:
             image = preprocess_image(image_path)
         else:
             image = cv2.imread(image_path)
+        
+        if image is None:
+            raise ValueError(f"Failed to load image: {image_path}")
         
         used_positions = []
         
@@ -101,7 +105,7 @@ def detect_and_recognize(image_path, output_folder, cropped_folder, log_file, pr
             log.write(f"Processing {image_path}:\n")
             # Measure vehicle detection time
             start_time = time.time()
-            results_vehicle = model_vehicle(image)
+            results_vehicle = model_vehicle(image, conf=args.confidence, imgsz=args.input_size)
             vehicle_time = format_inference_time(start_time)
             log.write(f"Vehicle detection time: {vehicle_time} ms\n")
             vehicle_detected = False
@@ -109,14 +113,14 @@ def detect_and_recognize(image_path, output_folder, cropped_folder, log_file, pr
             for result in results_vehicle:
                 for bbox in result.boxes.data.tolist():
                     x1, y1, x2, y2, score, class_id = bbox
-                    if class_id == 2:  # We only specify car class in the coco model for object detection
+                    if int(class_id) == 2:  # We only specify car class in the coco model for object detection
                         vehicle_detected = True
                         # crop image to keep vehicle
                         vehicle = image[int(y1):int(y2), int(x1):int(x2)]
                         
                         # Measure plate detection time
                         start_time = time.time()
-                        results_plate = model_plate(vehicle)
+                        results_plate = model_plate(vehicle, conf=args.confidence, imgsz=args.input_size)
                         plate_time = format_inference_time(start_time)
                         log.write(f"Plate detection time: {plate_time} ms\n")
                         
@@ -153,7 +157,7 @@ def detect_and_recognize(image_path, output_folder, cropped_folder, log_file, pr
                                     cv2.putText(image, f"{text} ({prob:.2f})", (text_x_position, text_y_position),
                                                 cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
                                     
-                                    log.write(f"  Detected plate: {text} with confidence: {prob}\n") # write console results to logs
+                                    log.write(f"  Detected plate: {text} with confidence: {prob}\n")
                                     
                                 # Annotate on the original image
                                 cv2.rectangle(image, (int(px1) + int(x1), int(py1) + int(y1)),
@@ -164,7 +168,7 @@ def detect_and_recognize(image_path, output_folder, cropped_folder, log_file, pr
             
             if not vehicle_detected: # will allow to run the second model if the first one did not detect a vehicle. Can cause problm in some situations with many objects nearby
                 start_time = time.time()
-                results_plate = model_plate(image)
+                results_plate = model_plate(image, conf=args.confidence, imgsz=args.input_size)
                 plate_time = format_inference_time(start_time)
                 log.write(f"Plate detection time (full image): {plate_time} ms\n")
                 
@@ -209,37 +213,52 @@ def detect_and_recognize(image_path, output_folder, cropped_folder, log_file, pr
             
         annotated_image_path = os.path.join(output_folder, "annotated_" + os.path.basename(image_path))
         cv2.imwrite(annotated_image_path, image)
-        print(f"Annotated image saved to: {annotated_image_path}")
+        logging.info(f"Annotated image saved to: {annotated_image_path}")
 
-        time.sleep(1)
         gc.collect()
     
     except Exception as e:
-        with open(log_file, 'a') as log:
-            log.write(f"Error processing {image_path}: {str(e)}\n")
-        print(f"Error processing {image_path}: {str(e)}")
+        logging.error(f"Error processing {image_path}: {str(e)}")
 
-def process_image(image_path, output_folder, cropped_folder, log_file, preprocess):
-    detect_and_recognize(image_path, output_folder, cropped_folder, log_file, preprocess)
-    gc.collect() 
+def process_image(args):
+    image_path, output_folder, cropped_folder, log_file, detection_args = args
+    detect_and_recognize(image_path, output_folder, cropped_folder, log_file, detection_args)
+    return image_path
 
-"""
-process_folder will process the images in the input folder using the multiprocessing and will log the inference times. 
-"""
-def process_folder(input_folder, output_folder, cropped_folder, log_file, preprocess):
+def process_folder(input_folder, output_folder, cropped_folder, log_file, args):
     image_extensions = {'.jpg', '.jpeg', '.png', '.bmp'}
     images = [f for f in os.listdir(input_folder) if any(f.lower().endswith(ext) for ext in image_extensions)]
     
     if not os.path.exists(cropped_folder):
         os.makedirs(cropped_folder)
     
-    with mp.Pool(mp.cpu_count()) as pool:
-        for image_path in tqdm(images, desc="Processing images"):
-            full_image_path = os.path.join(input_folder, image_path)
-            pool.apply_async(process_image, args=(full_image_path, output_folder, cropped_folder, log_file, preprocess))
-        pool.close()
-        pool.join()
+    total_images = len(images)
+    processed_images = 0
+    start_time = time.time()
     
+    with ProcessPoolExecutor(max_workers=mp.cpu_count()) as executor:
+        futures = []
+        for image_path in images:
+            full_image_path = os.path.join(input_folder, image_path)
+            futures.append(executor.submit(process_image, (full_image_path, output_folder, cropped_folder, log_file, args)))
+        
+        for future in tqdm(as_completed(futures), total=len(futures), desc="Processing images"):
+            processed_images += 1
+            logging.info(f"Processed {future.result()}")
+    
+    end_time = time.time()
+    total_time = end_time - start_time
+    
+    # Generate summary report
+    with open('summary_report.txt', 'w') as report:
+        report.write("License Plate Detection Summary Report\n")
+        report.write("======================================\n\n")
+        report.write(f"Total images processed: {total_images}\n")
+        report.write(f"Total processing time: {total_time:.2f} seconds\n")
+        report.write(f"Average time per image: {total_time/total_images:.2f} seconds\n")
+    
+    logging.info("Processing completed. Summary report generated in summary_report.txt")
+
 input_folder = 'data/input'
 output_folder = 'data/output'
 cropped_folder = 'data/cropped'
@@ -248,4 +267,4 @@ log_file = 'detection_log.txt'
 if not os.path.exists(input_folder):
     os.makedirs(input_folder)
     
-process_folder(input_folder, output_folder, cropped_folder, log_file, args.preprocess)
+process_folder(input_folder, output_folder, cropped_folder, log_file, args)
