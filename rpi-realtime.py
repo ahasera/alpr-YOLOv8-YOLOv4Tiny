@@ -1,186 +1,327 @@
 import cv2
 import numpy as np
 import easyocr
+import pytesseract
 from picamera2 import Picamera2
 import time
-import threading
 import argparse 
 import os
+import threading
+from queue import Queue, Empty
 #Picamera2.set_logging(Picamera2.DEBUG)
+#uncomment line above for additional DEBUG if you have picamera problems
 
 """"
 The yolov4-tiny.cfg IS NOT the default one. It has been adapted to correctly match my model classes. 
 As there is only 1 class, I updated the filters using the formula given in the Darknet Repo (YOLOV4Tiny Darknet): (nbclass+5)x3 which in my case gets us to 18.
 """
-
-parser = argparse.ArgumentParser(description="Real-time object detection and OCR with YOLOv4-tiny and EasyOCR.")
-parser.add_argument('--export', type=str, help='Directory to export annotated images and OCR results.')
-parser.add_argument('--no-skip', action='store_true', help='Perform on every frame without skipping. /!\ will decrease performance significantly')
+"""
+Command-line Argument Parsing
+-----------------------------
+Available options are:
+- Exporting annotated images to path of yout choice
+- Skipping frames to improve performance (not recommended)
+- Choosing between Tesseract and EasyOCR for text recognition (tesseract recommended for performance, EasyOCR for accuracy)
+- Enabling multi-threading for improved processing speed (I'd recommend to use it only if you plan to export frames as asynchronous image processing will lead annotations to pop and disappear)
+- Disabling OCR to focus solely on plate detection
+"""
+parser = argparse.ArgumentParser(description="Real-time object detection and OCR with YOLOv4-tiny and configurable OCR.")
+parser.add_argument('--export', type=str, help='Directory to export annotated images.')
+parser.add_argument('--skip', action='store_true', help='Skip frames (process every 10th frame)') # can change this value below 
+parser.add_argument('--tesseract', action='store_true', help='Use Tesseract instead of EasyOCR')
+parser.add_argument('--multi-thread', action='store_true', help='Enable multi-threading for processing')
+parser.add_argument('--no-ocr', action='store_true', help='Disable OCR and only perform detection')
 args = parser.parse_args()
 
+"""
+YOLO Model Configuration
+------------------------
+This section loads the YOLOv4-tiny model for license plate detection.
+The model has been customized for single-class detection (license plates),
+with the configuration adjusted accordingly.
+"""
 config_path = 'cfg/yolov4-tiny.cfg'
 weights_path = 'models/yolov4-tiny/custom-yolov4-tiny-detector_last.weights'
 names_path = 'cfg/obj.names'
-CONFIDENCE_THRESHOLD = 0.3 # higher or lower the confidence if you want more detections, less accurate or revert 
+CONFIDENCE_THRESHOLD = 0.3 # higher or lower the confidence if you want more detections, less accurate or revert (only plate detections, OCR accuracy is not meant to be modified for now)
 # Load the network weights and classes
 net = cv2.dnn.readNet(weights_path, config_path)
 with open(names_path, 'r') as f:
     classes = f.read().splitlines()
 
-# Initialize EasyOCR
-reader = easyocr.Reader(['en'])
 
-# Initialize the raspberry pi camera module with picamera2  
+"""
+OCR Initialization
+------------------
+Initialize the Optical Character Recognition (OCR) system based on user preferences. Mandatory for plates annotations
+If OCR is enabled, it sets up EasyOCR by default, but --tesseract is recommended for better performance on less powerful devices.
+"""
+if not args.no_ocr:
+    if args.tesseract:
+        ocr = pytesseract
+    else:
+        ocr = easyocr.Reader(['en'])
+
+"""
+Camera Initialization
+---------------------
+Set up the Raspberry Pi camera using the Picamera2 library.
+Higher resolutions can help you detect from farther but will lower performance significantly
+"""
 picam2 = Picamera2() 
-config = picam2.create_still_configuration(main={"size": (640, 480)}, buffer_count=8, lores={"size": (320, 240)}, display="lores") # change res here
-picam2.create_preview_configuration(queue=False)
-picam2.preview_configuration.main.format = "XRGB8888"
+config = picam2.create_still_configuration(main={"size": (640, 480)}, buffer_count=8) # change res and buffer count there, lores removed becausse not relevant
 picam2.configure(config)
 picam2.start()
 
 time.sleep(2)  # Allow camera to adjust
 
-# Initialize shared variables and synchronization primitives
-# lower or higher the frame_skip value to respectively lower or higher the annotation refresh rate
-frame = None
-results = None
-lock = threading.Lock()
-frame_skip = 10 if not args.no_skip else 1
-frame_counter = 0
-last_saved_time = 0
-save_interval = 5  # Save only if more than 5 seconds have passed since the last save
-last_saved_results = None
+"""
+Image Validation
+----------------
+This function checks if an image is valid and suitable for processing.
+It ensures that the image is not None, has a non-zero size, and has at least
+two dimensions (height and width). This validation is crucial to prevent
+crashes and errors when processing invalid or corrupted image data.
 
+Parameters:
+    image (numpy.ndarray): The input image to validate.
 
-def save_results(export_dir, frame, results):
-    global last_saved_time, last_saved_results
-    current_time = time.time()
-    if current_time - last_saved_time > save_interval and results_changed(results, last_saved_results):
-        timestamp = time.strftime("%Y%m%d-%H%M%S")
-        img_path = os.path.join(export_dir, f"annotated_{timestamp}.png")
-        txt_path = os.path.join(export_dir, f"ocr_{timestamp}.txt")
-
-        cv2.imwrite(img_path, frame)
-        with open(txt_path, 'w') as f:
-            for (x, y, w, h, label, confidence, ocr_text, color) in results:
-                f.write(f"Label: {label}, Confidence: {confidence}\n")
-                f.write(f"OCR Text: {ocr_text}\n\n")
-
-        last_saved_time = current_time
-        last_saved_results = results
-
-def results_changed(new_results, last_results):
-    if last_results is None:
-        return True
-    if len(new_results) != len(last_results):
-        return True
-    for new, last in zip(new_results, last_results):
-        if new[:6] != last[:6]:
-            return True
-    return False
-
+Returns:
+    bool: True if the image is valid, False otherwise.
+"""
+def is_valid_image(image):
+    return image is not None and image.size != 0 and len(image.shape) >= 2
 def preprocess_for_ocr(image):
-    # grey level conversion
+    if not is_valid_image(image):
+        return None
+    try:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        denoised = cv2.fastNlMeansDenoising(binary)
+        return denoised
+    except cv2.error as e:
+        print(f"Error in preprocess_for_ocr: {e}")
+        return None
+    
+"""
+Image Preprocessing for OCR
+---------------------------
+This function prepares the detected license plate image for OCR processing.
+It converts the image to grayscale, applies thresholding, and reduces noise
+to improve OCR accuracy. The function now includes error handling and
+image validation to ensure robust operation.
+
+Parameters:
+    image (numpy.ndarray): The input image containing the license plate.
+
+Returns:
+    numpy.ndarray: The preprocessed image ready for OCR, or None if preprocessing fails.
+"""
+def preprocess_for_ocr(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    # binarization
     _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    # denoise
     denoised = cv2.fastNlMeansDenoising(binary)
-    return denoised            
+    return denoised
 
-# Frame processing thread
-def process_frame():
-    global frame, results
-    while True:
-        with lock:
-            if frame is None:
-                continue
-            img = frame.copy()
-        height, width, _ = img.shape
+"""
+Frame Processing
+----------------
+This function is the core of the license plate detection system. It performs the following steps:
+1. Validates the input frame.
+2. Prepares the input frame for the YOLO model.
+3. Runs the YOLO model to detect license plates.
+4. Applies non-maximum suppression to filter overlapping detections.
+5. If OCR is enabled, it performs text recognition on each detected plate.
 
-        # Pre-process image and perform YOLO inference
-        blob = cv2.dnn.blobFromImage(img, 0.00392, (416, 416), (0, 0, 0), True, crop=False)
-        net.setInput(blob)
-        outs = net.forward(net.getUnconnectedOutLayersNames())
+The function now includes additional error checking and handling to ensure
+robust operation even with potentially problematic input frames.
 
-        # Parse YOLO outputs
-        class_ids, confidences, boxes = [], [], []
-        for out in outs:
-            for detection in out:
-                scores = detection[5:]
-                class_id = np.argmax(scores)
-                confidence = scores[class_id]
-                if confidence > CONFIDENCE_THRESHOLD:
-                    center_x = int(detection[0] * width)
-                    center_y = int(detection[1] * height)
-                    w = int(detection[2] * width)
-                    h = int(detection[3] * height)
-                    x = int(center_x - w / 2)
-                    y = int(center_y - h / 2)
-                    boxes.append([x, y, w, h])
-                    confidences.append(float(confidence))
-                    class_ids.append(class_id)
+Parameters:
+    frame (numpy.ndarray): The input frame from the camera.
 
-        # Apply Non-Maximum Suppression (NMS) to prevent multi-boxes overlapping eachother
-        new_results = []
-        if class_ids:
-            indexes = cv2.dnn.NMSBoxes(boxes, confidences, 0.5, 0.4)
-            if isinstance(indexes, np.ndarray) and indexes.size > 0:
-                for i in indexes.flatten():
-                    x, y, w, h = boxes[i]
-                    label = str(classes[class_ids[i]])
-                    confidence = confidences[i]
-                    color = (0, 255, 0)
+Returns:
+    list: A list of tuples, each containing information about a detected license plate
+          (bounding box coordinates, label, confidence, OCR text, and color for visualization).
+"""
+def process_frame(frame):
+    height, width, _ = frame.shape
+    blob = cv2.dnn.blobFromImage(frame, 0.00392, (416, 416), (0, 0, 0), True, crop=False)
+    net.setInput(blob)
+    outs = net.forward(net.getUnconnectedOutLayersNames())
 
-                    # Perform OCR on detected box
-                    crop_img = img[y:y+h, x:x+w]
-                    preprocessed_crop = preprocess_for_ocr(crop_img)
-                    ocr_result = reader.readtext(preprocessed_crop)
+    class_ids, confidences, boxes = [], [], []
+    for out in outs:
+        for detection in out:
+            scores = detection[5:]
+            class_id = np.argmax(scores)
+            confidence = scores[class_id]
+            if confidence > CONFIDENCE_THRESHOLD:
+                center_x = int(detection[0] * width)
+                center_y = int(detection[1] * height)
+                w = int(detection[2] * width)
+                h = int(detection[3] * height)
+                x = int(center_x - w / 2)
+                y = int(center_y - h / 2)
+                boxes.append([x, y, w, h])
+                confidences.append(float(confidence))
+                class_ids.append(class_id)
+
+    results = []
+    indexes = cv2.dnn.NMSBoxes(boxes, confidences, 0.5, 0.4)
+    if isinstance(indexes, np.ndarray) and indexes.size > 0:
+        for i in indexes.flatten():
+            x, y, w, h = boxes[i]
+            label = str(classes[class_ids[i]])
+            confidence = confidences[i]
+            color = (0, 255, 0)
+
+            if not args.no_ocr:
+                crop_img = frame[y:y+h, x:x+w]
+                preprocessed_crop = preprocess_for_ocr(crop_img)
+                if args.tesseract:
+                    ocr_text = ocr.image_to_string(preprocessed_crop).strip()
+                else:
+                    ocr_result = ocr.readtext(preprocessed_crop)
                     ocr_text = " ".join([res[1] for res in ocr_result])
+            else:
+                ocr_text = ""
 
-                    new_results.append((x, y, w, h, label, confidence, ocr_text, color))
+            results.append((x, y, w, h, label, confidence, ocr_text, color))
 
-        with lock:
-            results = new_results
+    return results
 
-# Start frame processing thread
-thread = threading.Thread(target=process_frame)
-thread.daemon = True
-thread.start()
-prev_time = time.time()
+"""
+Multi-threaded Frame Processing
+-------------------------------
+This function runs in a separate thread when multi-threading is enabled.
+It continuously processes frames from the input queue and puts the results
+in the output queue. This allows for parallel processing of frames, potentially
+improving overall system performance. Keep in mind though that as it processes images asynchronously, 
+annotations can pop and disappear real fast. It is recommended to use it with the export option 
+allowing for best overall performance and export in another thread detected plates on vehicles, 
+snapshotted in the folder of your choice. 
 
-# Main loop for capturing and displaying frames
-while True:
-    start_time = time.time()
-    with lock:
+The function now includes additional error handling and logging to help
+identify and diagnose issues in the multi-threaded processing pipeline.
+
+Parameters:
+    input_queue (Queue): Queue containing frames to be processed.
+    output_queue (Queue): Queue to store processed results.
+    stop_event (threading.Event): Event to signal when to stop processing.
+"""
+def process_frame_thread(input_queue, output_queue, stop_event):
+    while not stop_event.is_set():
+        try:
+            timestamp, frame = input_queue.get(timeout=1)
+            results = process_frame(frame)
+            output_queue.put((timestamp, frame, results))
+            input_queue.task_done()
+        except Empty:
+            continue
+        except Exception as e:
+            print(f"Error in processing thread: {e}")
+
+def export_thread(export_queue, export_dir, stop_event):
+    while not stop_event.is_set() or not export_queue.empty():
+        try:
+            frame, timestamp = export_queue.get(timeout=1)
+            filename = os.path.join(export_dir, f"annotated_{timestamp}.png")
+            cv2.imwrite(filename, frame)
+        except Empty:
+            continue
+        except Exception as e:
+            print(f"Error in export thread: {e}")
+
+frame_count = 0
+start_time = time.time()
+stop_event = threading.Event()
+
+if args.multi_thread:
+    input_queue = Queue(maxsize=2) 
+    output_queue = Queue(maxsize=2)  # Reduced queue size to 2 
+    processing_thread = threading.Thread(target=process_frame_thread, args=(input_queue, output_queue, stop_event))
+    processing_thread.start()
+
+if args.export:
+    os.makedirs(args.export, exist_ok=True)
+    export_queue = Queue()
+    export_thread = threading.Thread(target=export_thread, args=(export_queue, args.export, stop_event))
+    export_thread.start()
+"""
+Main Loop
+-------------------
+This is the primary execution loop of rpi-realtime
+It continuously captures frames from the camera, processes them (either in
+the main thread or a separate thread), and displays the results annotated.
+
+Key features:
+- Supports frame skipping for performance optimization
+- Handles multi-threaded processing if enabled
+- Manages result synchronization in multi-threaded mode
+- Displays detected license plates and OCR results on the frame
+- Calculates and displays FPS in term stdout 
+- Supports exporting of annotated frames (useful in combi. with multi-thread)
+"""
+try:
+    last_processed_timestamp = 0
+    while True:
         frame = picam2.capture_array()
-        display_frame = frame.copy()
-        current_results = results
-
-    if current_results:  # Ensure current_results is not None
-        for (x, y, w, h, label, confidence, ocr_text, color) in current_results:
-            cv2.rectangle(display_frame, (x, y), (x + w, y + h), color, 2)
-            cv2.putText(display_frame, label + " " + str(round(confidence, 2)), (x, y - 10), cv2.FONT_HERSHEY_PLAIN, 1, color, 2)
-            ocr_text_position_y = y + h + 20
-            if ocr_text_position_y + 30 > display_frame.shape[0]:
-                ocr_text_position_y = y - 30
-            cv2.putText(display_frame, ocr_text, (x, ocr_text_position_y), cv2.FONT_HERSHEY_PLAIN, 3, color, 2) # change annotation color and size here
-
-        if args.export:
-            save_results(args.export, display_frame, current_results)
-
-    end_time = time.time()
-    fps = 1 / (end_time - start_time)
-    cv2.putText(display_frame, f"FPS: {int(fps)}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
-
-    cv2.imshow("Annotated Image", display_frame)
+        current_timestamp = time.time()
+        results = []  # Initialize results as an empty list
         
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
+        if not args.skip or frame_count % 10 == 0:
+            if args.multi_thread:
+                if input_queue.full():
+                    try:
+                        input_queue.get_nowait()  # Remove oldest frame if queue is full
+                    except Empty:
+                        pass
+                input_queue.put((current_timestamp, frame))
+                
+                try:
+                    while not output_queue.empty():
+                        timestamp, processed_frame, new_results = output_queue.get_nowait()
+                        if timestamp > last_processed_timestamp:
+                            last_processed_timestamp = timestamp
+                            frame = processed_frame
+                            results = new_results
+                            break
+                except Empty:
+                    pass
+            else:
+                results = process_frame(frame)
+            
+            for (x, y, w, h, label, confidence, ocr_text, color) in results:
+                cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
+                cv2.putText(frame, f"{label} {confidence:.2f}", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
+                if not args.no_ocr:
+                    ocr_y = y + h + 20
+                    cv2.putText(frame, ocr_text, (x, ocr_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
 
-    frame_counter += 1
-    if frame_counter % frame_skip == 0:
-        with lock:
-            frame = display_frame
-picam2.stop()
-cv2.destroyAllWindows()
+            if args.export and results:
+                timestamp = time.strftime("%Y%m%d-%H%M%S")
+                export_queue.put((frame.copy(), timestamp))
+
+        cv2.imshow("Live detection (press 'q' to quit program)", frame)
+        
+        frame_count += 1
+        if frame_count % 30 == 0:
+            end_time = time.time()
+            fps = 30 / (end_time - start_time)
+            print(f"FPS: {fps:.2f}")
+            start_time = time.time()
+
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+except KeyboardInterrupt:
+    print("Interrupted by user")
+
+finally:
+    stop_event.set()
+    if args.multi_thread:
+        processing_thread.join()
+    if args.export:
+        export_thread.join()
+    picam2.stop()
+    cv2.destroyAllWindows()
