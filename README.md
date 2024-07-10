@@ -3,9 +3,11 @@
 
 # alpr-YOLOv8-YOLOv4Tiny
   
+## Project Description
 
 This project is a subproject made in the context of an internship. Its goal is to provide tools that allows to detect and extract the characters of license plates. At the end, the purpose of this project for me is to compare different solutions, models accuracy and test in different conditions.
 
+## Table of Contents 
   
 
 ## Content
@@ -100,13 +102,11 @@ You can simply run these programs using:
   
 
 ```
-
 python3 lpdetect.py
 
 python3 rpi-lp.py
 
 python3 rpi-realtime.py
-
 ```
 Example usage of `clean.py` : 
 
