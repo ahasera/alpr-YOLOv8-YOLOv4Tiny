@@ -1,0 +1,69 @@
+{% extends "index.html" %}
+{% block content %}
+<h2>Real-time Processing</h2>
+<form id="realtimeOptions">
+    <div class="mb-3">
+        <label for="exportDir" class="form-label">Export Directory:</label>
+        <input type="text" class="form-control" id="exportDir" name="export">
+    </div>
+    <div class="mb-3 form-check">
+        <input type="checkbox" class="form-check-input" id="skipFrames">
+        <label class="form-check-label" for="skipFrames">Skip Frames</label>
+    </div>
+    <div class="mb-3 form-check">
+        <input type="checkbox" class="form-check-input" id="useTesseract">
+        <label class="form-check-label" for="useTesseract">Use Tesseract</label>
+    </div>
+    <div class="mb-3 form-check">
+        <input type="checkbox" class="form-check-input" id="multiThread">
+        <label class="form-check-label" for="multiThread">Enable Multi-threading</label>
+    </div>
+    <div class="mb-3 form-check">
+        <input type="checkbox" class="form-check-input" id="noOCR">
+        <label class="form-check-label" for="noOCR">Disable OCR</label>
+    </div>
+    <button type="button" id="startButton" class="btn btn-primary">Start Real-time Processing</button>
+</form>
+<div id="output"></div>
+
+<script>
+    document.getElementById('startButton').addEventListener('click', function() {
+        const exportDir = document.getElementById('exportDir').value;
+        const skipFrames = document.getElementById('skipFrames').checked;
+        const useTesseract = document.getElementById('useTesseract').checked;
+        const multiThread = document.getElementById('multiThread').checked;
+        const noOCR = document.getElementById('noOCR').checked;
+        
+        const params = new URLSearchParams({
+            export: exportDir,
+            skip: skipFrames ? 'true' : '',
+            tesseract: useTesseract ? 'true' : '',
+            multi_thread: multiThread ? 'true' : '',
+            no_ocr: noOCR ? 'true' : ''
+        });
+
+        const outputDiv = document.getElementById('output');
+        fetch('/video_feed?' + params.toString())
+            .then(response => {
+                const reader = response.body.getReader();
+                return new ReadableStream({
+                    start(controller) {
+                        function pump() {
+                            return reader.read().then(({ done, value }) => {
+                                if (done) {
+                                    controller.close();
+                                    return;
+                                }
+                                controller.enqueue(value);
+                                outputDiv.textContent += new TextDecoder().decode(value);
+                                return pump();
+                            });
+                        }
+                        return pump();
+                    }
+                })
+            })
+            .catch(err => console.error(err));
+    });
+</script>
+{% endblock %}

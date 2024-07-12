@@ -1,0 +1,19 @@
+{% extends "index.html" %}
+{% block content %}
+<h2>Processing Results</h2>
+<div class="row">
+    <div class="col-md-6">
+        <h3>Output Images</h3>
+        {% for image in output_images %}
+            <img src="{{ url_for('send_image', folder='output', filename=image) }}" class="img-fluid mb-3" alt="{{ image }}">
+        {% endfor %}
+    </div>
+    <div class="col-md-6">
+        <h3>Cropped Plates</h3>
+        {% for image in cropped_images %}
+            <img src="{{ url_for('send_image', folder='cropped', filename=image) }}" class="img-fluid mb-3" alt="{{ image }}">
+        {% endfor %}
+    </div>
+</div>
+<a href="{{ url_for('download', filename='detection_log.txt') }}" class="btn btn-primary">Download Log</a>
+{% endblock %}

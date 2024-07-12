@@ -282,6 +282,7 @@ Key features:
 - Calculates and displays FPS in term stdout 
 - Supports exporting of annotated frames (useful in combi. with multi-thread)
 """
+# Main Loop
 try:
     last_processed_timestamp = 0
     while True:
@@ -325,17 +326,12 @@ try:
                 timestamp = time.strftime("%Y%m%d-%H%M%S")
                 export_queue.put((frame.copy(), timestamp))
 
-        cv2.imshow("Live detection (press 'q' to quit program)", frame)
-        
         frame_count += 1
         if frame_count % 30 == 0:
             end_time = time.time()
             fps = 30 / (end_time - start_time)
             print(f"FPS: {fps:.2f}")
             start_time = time.time()
-
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
 
 except KeyboardInterrupt:
     print("Interrupted by user")
@@ -348,4 +344,3 @@ finally:
     if args.export:
         export_thread.join()
     picam2.stop()
-    cv2.destroyAllWindows()

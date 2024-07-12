@@ -1,0 +1,28 @@
+{% extends "index.html" %}
+{% block content %}
+<h2>Clean Directories</h2>
+{% if message %}
+<div class="alert alert-success" role="alert">
+    {{ message }}
+</div>
+{% endif %}
+<form action="{{ url_for('clean') }}" method="post">
+    <div class="mb-3 form-check">
+        <input type="checkbox" name="input" id="input" class="form-check-input">
+        <label for="input" class="form-check-label">Clean input directory</label>
+    </div>
+    <div class="mb-3 form-check">
+        <input type="checkbox" name="output" id="output" class="form-check-input">
+        <label for="output" class="form-check-label">Clean output directory</label>
+    </div>
+    <div class="mb-3 form-check">
+        <input type="checkbox" name="cropped" id="cropped" class="form-check-input">
+        <label for="cropped" class="form-check-label">Clean cropped directory</label>
+    </div>
+    <div class="mb-3 form-check">
+        <input type="checkbox" name="log" id="log" class="form-check-input">
+        <label for="log" class="form-check-label">Truncate log file</label>
+    </div>
+    <button type="submit" class="btn btn-danger">Clean Selected</button>
+</form>
+{% endblock %}

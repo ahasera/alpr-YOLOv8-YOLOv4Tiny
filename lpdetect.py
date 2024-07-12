@@ -10,6 +10,8 @@ import argparse
 from preprocessing import preprocess_image
 import logging
 from concurrent.futures import ProcessPoolExecutor, as_completed
+import re 
+import torch
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -19,7 +21,10 @@ parser = argparse.ArgumentParser(description='Vehicle and License Plate Detectio
 parser.add_argument('--preprocess', action='store_true', help='Enable preprocessing of images')
 parser.add_argument('--confidence', type=float, default=0.5, help='Confidence threshold for detection')
 parser.add_argument('--input-size', type=int, default=416, help='Input size for YOLO models')
+parser.add_argument('--output-format', choices=['csv', 'json'], default='csv', help="Output format for results")
+parser.add_argument('--use-gpu', action='store_true', help='Use GPU for processsing if available')
 args = parser.parse_args()
+
 
 """
 YoloV8 model initialisation 
@@ -28,17 +33,44 @@ Second one is yours or mine, for license plate object detection.
 """
 try:
     model_vehicle = YOLO('models/yolov8/yolov8n.pt')
+    model_plate = YOLO('models/yolov8/best.pt')  # YOLOv8 model for plate detection
+    if args.use_gpu and torch.cuda.is_available():
+        model_vehicle.to('cuda')
+        model_plate.to('cuda')
+        logging.info("Using GPU for YOLO models")
+    else:
+        logging.info("Using CPU for YOLO models")
 except Exception as e:
-    logging.error(f"Error while loading yolov8n base model: {e}")
-    exit(1)
-
-try:
-    model_plate = YOLO('models/yolov8/best.pt')  # YoloV8 model for plate detection 
-except Exception as e:
-    logging.error(f"Error while loading license-plate model: {e}")
+    logging.error(f"Error while loading YOLO models: {e}")
     exit(1)
     
-reader = easyocr.Reader(['en'])
+try:
+    reader = easyocr.Reader(['en'], gpu=args.use_gpu)
+except Exception as e:
+    logging.error(f"Error initializing EasyOCR: {e}")
+    exit(1)
+    
+# Mapping dictionaries for character conversion
+dict_char_to_int = {'O': '0', 'I': '1', 'J': '3', 'A': '4', 'G': '6', 'S': '5'}
+dict_int_to_char = {'0': 'O', '1': 'I', '3': 'J', '4': 'A', '6': 'G', '5': 'S'}
+
+def apply_conversion(text, conversion_dict):
+    return ''.join(conversion_dict.get(char, char) for char in text)
+
+def measure_time(func):
+    def wrapper(*args, **kwargs):
+        start_time = time.perf_counter()
+        result = func(*args, **kwargs)
+        end_time = time.perf_counter()
+        execution_time = (end_time - start_time) * 1000  # Convert to milliseconds
+        return result, execution_time
+    return wrapper
+
+def is_valid_plate(text):
+    # Add your country-specific license plate format validation here
+    # This is a simple example, adjust as needed
+    pattern = r'^[A-Z0-9]{5,8}$'
+    return bool(re.match(pattern, text))
 
 def adjust_text_position(image, text_x, text_y, text, font_scale, thickness, used_positions):
     """
@@ -104,9 +136,9 @@ def detect_and_recognize(image_path, output_folder, cropped_folder, log_file, ar
         with open(log_file, 'a') as log:
             log.write(f"Processing {image_path}:\n")
             # Measure vehicle detection time
-            start_time = time.time()
+            start_time = time.perf_counter()
             results_vehicle = model_vehicle(image, conf=args.confidence, imgsz=args.input_size)
-            vehicle_time = format_inference_time(start_time)
+            vehicle_time = (time.perf_counter() - start_time) * 1000 
             log.write(f"Vehicle detection time: {vehicle_time} ms\n")
             vehicle_detected = False
             
@@ -119,10 +151,10 @@ def detect_and_recognize(image_path, output_folder, cropped_folder, log_file, ar
                         vehicle = image[int(y1):int(y2), int(x1):int(x2)]
                         
                         # Measure plate detection time
-                        start_time = time.time()
+                        start_time = time.perf_counter()
                         results_plate = model_plate(vehicle, conf=args.confidence, imgsz=args.input_size)
-                        plate_time = format_inference_time(start_time)
-                        log.write(f"Plate detection time: {plate_time} ms\n")
+                        plate_time = (time.perf_counter() - start_time) * 1000
+                        log.write(f"Plate detection time: {plate_time:.2f} ms\n")
                         
                         for result_plate in results_plate:
                             for bbox_plate in result_plate.boxes.data.tolist():
@@ -135,10 +167,10 @@ def detect_and_recognize(image_path, output_folder, cropped_folder, log_file, ar
                                 cv2.imwrite(plate_filename, plate)
                                 
                                 # Measure OCR time
-                                start_time = time.time()
+                                start_time = time.perf_counter()
                                 ocr_result = reader.readtext(plate)
-                                ocr_time = format_inference_time(start_time)
-                                log.write(f"OCR time: {ocr_time} ms\n")
+                                ocr_time = (time.perf_counter() - start_time) * 1000
+                                log.write(f"OCR time: {ocr_time:.2f} ms\n")
                                 
                                 """
                                 this for loop will annotate each image
@@ -255,7 +287,10 @@ def process_folder(input_folder, output_folder, cropped_folder, log_file, args):
         report.write("======================================\n\n")
         report.write(f"Total images processed: {total_images}\n")
         report.write(f"Total processing time: {total_time:.2f} seconds\n")
-        report.write(f"Average time per image: {total_time/total_images:.2f} seconds\n")
+        if total_images > 0:
+            report.write(f"Average time per image: {total_time/total_images:.2f} seconds\n")
+        else:
+            report.write("No images were processed.\n")
     
     logging.info("Processing completed. Summary report generated in summary_report.txt")
 
