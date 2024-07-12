@@ -1,15 +1,26 @@
-from flask import Flask, render_template, request, redirect, url_for, send_file, send_from_directory
+from flask import Flask, render_template, request, redirect, url_for, send_file, send_from_directory, Response, jsonify
 import os
 import subprocess
 import shutil
+import cv2 
 
 app = Flask(__name__)
+camera = None
 
 # Configuration
 INPUT_FOLDER = 'data/input'
 OUTPUT_FOLDER = 'data/output'
 CROPPED_FOLDER = 'data/cropped'
 LOG_FILE = 'detection_log.txt'
+
+"""
+Standalone functions
+"""
+def get_camera():
+    global camera
+    if camera is None:
+        camera = cv2.VideoCapture(0)  # Assurez-vous de libérer la caméra avant de la réallouer
+    return camera
 
 @app.route('/')
 def index():
@@ -74,16 +85,37 @@ def results():
     cropped_images = os.listdir(CROPPED_FOLDER)
     return render_template('results.html', output_images=output_images, cropped_images=cropped_images)
 
+@app.route('/start_camera')
+def start_camera():
+    get_camera()  # Just call to initialize the camera
+    return jsonify({"status": "Camera started"})
+@app.route('/stop_camera')
+def stop_camera():
+    global camera
+    if camera is not None:
+        camera.release()
+        camera = None
+    return jsonify({"status": "Camera stopped"})
 @app.route('/realtime')
 def realtime():
     return render_template('realtime.html')
 
 @app.route('/video_feed')
 def video_feed():
-    cmd = ['python', 'rpi-realtime-no-gui.py']
-    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, universal_newlines=True)
-    return Response(process.stdout, mimetype='text/plain')
+    """route for video stream."""
+    return Response(gen_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
+def gen_frames():
+    while True:
+        camera = get_camera()
+        success, frame = camera.read()
+        if not success:
+            break
+        else:
+            ret, buffer = cv2.imencode('.jpg', frame)
+            frame = buffer.tobytes()
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
 @app.route('/clean', methods=['GET', 'POST'])
 def clean():
     if request.method == 'POST':
@@ -119,5 +151,5 @@ def clear_directory(directory):
 if __name__ == '__main__':
     for folder in [INPUT_FOLDER, OUTPUT_FOLDER, CROPPED_FOLDER]:
         os.makedirs(folder, exist_ok=True)
-    app.run(debug=True)
+    app.run(debug=True, threaded=True)
     
