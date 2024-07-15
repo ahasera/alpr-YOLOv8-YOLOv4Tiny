@@ -69,7 +69,7 @@ Set up the Raspberry Pi camera using the Picamera2 library.
 Higher resolutions can help you detect from farther but will lower performance significantly
 """
 picam2 = Picamera2() 
-config = picam2.create_still_configuration(main={"size": (640, 480)}, buffer_count=8) # change res and buffer count there, lores removed becausse not relevant
+config = picam2.create_still_configuration(main={"size": (640, 480)}, buffer_count=8) # change res and buffer count there, lores removed because not relevant
 picam2.configure(config)
 picam2.start()
 
@@ -90,18 +90,9 @@ Returns:
     bool: True if the image is valid, False otherwise.
 """
 def is_valid_image(image):
-    return image is not None and image.size != 0 and len(image.shape) >= 2
-def preprocess_for_ocr(image):
-    if not is_valid_image(image):
-        return None
-    try:
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        denoised = cv2.fastNlMeansDenoising(binary)
-        return denoised
-    except cv2.error as e:
-        print(f"Error in preprocess_for_ocr: {e}")
-        return None
+    return image is not None and image.size != 0 and len(image.shape) >= 2 and image.shape[0] > 0 and image.shape[1] > 0
+
+
     
 """
 Image Preprocessing for OCR
@@ -118,10 +109,20 @@ Returns:
     numpy.ndarray: The preprocessed image ready for OCR, or None if preprocessing fails.
 """
 def preprocess_for_ocr(image):
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    denoised = cv2.fastNlMeansDenoising(binary)
-    return denoised
+    if not is_valid_image(image):
+        print("Invalid image received in preprocess_for_ocr")
+        return None
+    try:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        denoised = cv2.fastNlMeansDenoising(binary)
+        return denoised
+    except cv2.error as e:
+        print(f"Error in preprocess_for_ocr: {e}")
+        return None
+    except Exception as e:
+        print(f"Unexpected error in preprocess_for_ocr: {e}")
+        return None
 
 """
 Frame Processing
@@ -144,6 +145,10 @@ Returns:
           (bounding box coordinates, label, confidence, OCR text, and color for visualization).
 """
 def process_frame(frame):
+    if not is_valid_image(frame):
+        print("Invalid frame received in process_frame")
+        return []
+
     height, width, _ = frame.shape
     blob = cv2.dnn.blobFromImage(frame, 0.00392, (416, 416), (0, 0, 0), True, crop=False)
     net.setInput(blob)
@@ -176,13 +181,28 @@ def process_frame(frame):
             color = (0, 255, 0)
 
             if not args.no_ocr:
-                crop_img = frame[y:y+h, x:x+w]
-                preprocessed_crop = preprocess_for_ocr(crop_img)
-                if args.tesseract:
-                    ocr_text = ocr.image_to_string(preprocessed_crop).strip()
+                # Ensure the crop coordinates are within the frame boundaries
+                crop_x = max(0, min(x, width - 1))
+                crop_y = max(0, min(y, height - 1))
+                crop_w = min(w, width - crop_x)
+                crop_h = min(h, height - crop_y)
+                
+                if crop_w > 0 and crop_h > 0:
+                    crop_img = frame[crop_y:crop_y+crop_h, crop_x:crop_x+crop_w]
+                    if is_valid_image(crop_img):
+                        preprocessed_crop = preprocess_for_ocr(crop_img)
+                        if preprocessed_crop is not None:
+                            if args.tesseract:
+                                ocr_text = ocr.image_to_string(preprocessed_crop).strip()
+                            else:
+                                ocr_result = ocr.readtext(preprocessed_crop)
+                                ocr_text = " ".join([res[1] for res in ocr_result])
+                        else:
+                            ocr_text = "OCR Failed"
+                    else:
+                        ocr_text = "Invalid crop"
                 else:
-                    ocr_result = ocr.readtext(preprocessed_crop)
-                    ocr_text = " ".join([res[1] for res in ocr_result])
+                    ocr_text = "Invalid crop size"
             else:
                 ocr_text = ""
 
@@ -224,14 +244,28 @@ def process_frame_thread(input_queue, output_queue, stop_event):
 def export_thread(export_queue, export_dir, stop_event):
     while not stop_event.is_set() or not export_queue.empty():
         try:
-            frame, timestamp = export_queue.get(timeout=1)
-            filename = os.path.join(export_dir, f"annotated_{timestamp}.png")
-            cv2.imwrite(filename, frame)
+            frame, timestamp, results = export_queue.get(timeout=1)
+            
+            # Save full annotated image
+            full_filename = os.path.join(export_dir, f"annotated_{timestamp}.png")
+            cv2.imwrite(full_filename, frame)
+            
+            # Save cropped license plates
+            cropped_dir = os.path.join(export_dir, "cropped")
+            
+            # Assure-toi que le dossier cropped_dir existe
+            os.makedirs(cropped_dir, exist_ok=True)
+            
+            for idx, (x, y, w, h, label, confidence, _, _) in enumerate(results):
+                crop = frame[y:y+h, x:x+w]
+                crop_filename = os.path.join(cropped_dir, f"crop_{timestamp}_{idx}.png")
+                cv2.imwrite(crop_filename, crop)
+            
         except Empty:
             continue
         except Exception as e:
             print(f"Error in export thread: {e}")
-
+            
 frame_count = 0
 start_time = time.time()
 stop_event = threading.Event()
@@ -266,6 +300,9 @@ try:
     last_processed_timestamp = 0
     while True:
         frame = picam2.capture_array()
+        if not is_valid_image(frame):
+            print("Invalid frame captured, skipping...")
+            continue
         current_timestamp = time.time()
         results = []  # Initialize results as an empty list
         
@@ -298,9 +335,9 @@ try:
                     ocr_y = y + h + 20
                     cv2.putText(frame, ocr_text, (x, ocr_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
 
-            if args.export and results:
-                timestamp = time.strftime("%Y%m%d-%H%M%S")
-                export_queue.put((frame.copy(), timestamp))
+        if args.export and results:
+            timestamp = time.strftime("%Y%m%d-%H%M%S")
+            export_queue.put((frame.copy(), timestamp, results))
 
         cv2.imshow("Live detection (press 'q' to quit program)", frame)
         
@@ -316,7 +353,8 @@ try:
 
 except KeyboardInterrupt:
     print("Interrupted by user")
-
+except Exception as e:
+    print(f"An unexpected error occurred: {e}")
 finally:
     stop_event.set()
     if args.multi_thread:
