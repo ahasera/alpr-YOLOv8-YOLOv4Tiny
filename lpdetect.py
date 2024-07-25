@@ -1,3 +1,34 @@
+"""
+License Plate Detection with YOLOv8 and EasyOCR
+
+This script performs vehicle and license plate detection using YOLOv8 models,
+followed by Optical Character Recognition (OCR) on detected license plates.
+
+The script processes images in a specified input folder, detecting vehicles and license plates,
+performing OCR, and saving annotated images and cropped plate images. It utilizes multiprocessing
+for improved performance on multi-core systems.
+
+Usage:
+    python3 lpdetect.py [--preprocess] [--confidence CONFIDENCE] [--input-size INPUT_SIZE]
+
+Arguments:
+    --preprocess: Enable preprocessing of images before detection (optional)
+    --confidence: Confidence threshold for detection (default: 0.5)
+    --input-size: Input size for YOLO models, must be multiple of 32 (default: 416)
+
+Dependencies:
+    - OpenCV (cv2)
+    - NumPy
+    - Ultralytics YOLO
+    - EasyOCR
+    - tqdm
+    - Custom preprocessing module (preprocessing.py)
+
+Note: You can use this script with cuda by installing the correct version of torch. 
+
+Author: ahasera
+Date: 25/07/2024
+"""
 import os
 import cv2
 from ultralytics import YOLO
@@ -33,7 +64,7 @@ except Exception as e:
     exit(1)
 
 try:
-    model_plate = YOLO('models/yolov8/best.pt')  # YOLOv8 model for plate detection
+    model_plate = YOLO('models/yolov8/model.pt')  # YOLOv8 model for plate detection
 except Exception as e:
     logging.error(f"Error while loading license-plate model: {e}")
     exit(1)
