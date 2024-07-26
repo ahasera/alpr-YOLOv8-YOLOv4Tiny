@@ -25,12 +25,18 @@ Available options are:
 - Enabling multi-threading for improved processing speed (I'd recommend to use it only if you plan to export frames as asynchronous image processing will lead annotations to pop and disappear)
 - Disabling OCR to focus solely on plate detection
 """
+def parse_resolution(res_string):
+    width, height = map(int, res_string.split('x'))
+    return (width, height)
+
 parser = argparse.ArgumentParser(description="Real-time object detection and OCR with YOLOv4-tiny and configurable OCR.")
 parser.add_argument('--export', type=str, help='Directory to export annotated images.')
 parser.add_argument('--skip', action='store_true', help='Skip frames (process every 10th frame)') # can change this value below 
 parser.add_argument('--tesseract', action='store_true', help='Use Tesseract instead of EasyOCR')
 parser.add_argument('--multi-thread', action='store_true', help='Enable multi-threading for processing')
 parser.add_argument('--no-ocr', action='store_true', help='Disable OCR and only perform detection')
+parser = argparse.ArgumentParser(description="Real-time object detection and OCR with YOLOv4-tiny and configurable OCR.")
+parser.add_argument('--resolution', type=str, default='640x480', help='Camera resolution (WxH)')
 args = parser.parse_args()
 
 """
@@ -69,7 +75,7 @@ Set up the Raspberry Pi camera using the Picamera2 library.
 Higher resolutions can help you detect from farther but will lower performance significantly
 """
 picam2 = Picamera2() 
-config = picam2.create_still_configuration(main={"size": (640, 480)}, buffer_count=8) # change res and buffer count there, lores removed because not relevant
+config = picam2.create_still_configuration(main={"size": resolution}, buffer_count=8) # change res and buffer count there, lores removed because not relevant
 picam2.configure(config)
 picam2.start()
 
