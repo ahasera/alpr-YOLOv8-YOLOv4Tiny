@@ -4,7 +4,7 @@ easyocr==1.7.1
 opencv_python==4.10.0.84
 opencv_python_headless==4.10.0.84
 tqdm==4.66.4
-ultralytics==8.2.66
+ultralytics==8.2.58
 numpy==1.26.4
 pillow==9.5.0
 picamera2==0.3.18
