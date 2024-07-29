@@ -9,3 +9,4 @@ numpy==1.26.4
 pillow==9.5.0
 picamera2==0.3.18
 pytesseract==0.3.10
+pandas==2.2.2

@@ -35,10 +35,10 @@ parser.add_argument('--skip', action='store_true', help='Skip frames (process ev
 parser.add_argument('--tesseract', action='store_true', help='Use Tesseract instead of EasyOCR')
 parser.add_argument('--multi-thread', action='store_true', help='Enable multi-threading for processing')
 parser.add_argument('--no-ocr', action='store_true', help='Disable OCR and only perform detection')
-parser = argparse.ArgumentParser(description="Real-time object detection and OCR with YOLOv4-tiny and configurable OCR.")
 parser.add_argument('--resolution', type=str, default='640x480', help='Camera resolution (WxH)')
 args = parser.parse_args()
 
+resolution = parse_resolution(args.resolution)
 """
 YOLO Model Configuration
 ------------------------

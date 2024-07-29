@@ -64,7 +64,7 @@ except Exception as e:
     exit(1)
 
 try:
-    model_plate = YOLO('models/yolov8/model.pt')  # YOLOv8 model for plate detection
+    model_plate = YOLO('models/yolov8/best.pt')  # YOLOv8 model for plate detection
 except Exception as e:
     logging.error(f"Error while loading license-plate model: {e}")
     exit(1)
