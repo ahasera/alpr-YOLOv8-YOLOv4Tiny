@@ -1,21 +1,19 @@
-
-  
-
-  
-
 #  alpr-YOLOv8-YOLOv4Tiny
 ![License](https://img.shields.io/badge/license-GNU-blue.svg) 
 ##  Project Description
 
-  
-
 This project is a subproject made in the context of an internship. Its goal is to provide tools that allows to detect and extract the characters of license plates. At the end, the purpose of this project for me is to compare different solutions, models accuracy and test in different conditions.
-
-  
 
 ##  Table of Contents
 
-  
+- [Project Description](#project-description)
+- [Table of Contents](#table-of-contents)
+- [Content](#content)
+- [Installation](#installations)
+- [Usage](#usage)
+- [Models](#models)
+- [License](#license)
+- [Acknowledgements](#Acknowledgements)
 
 ##  Content
  
@@ -120,4 +118,9 @@ The dataset we used for training is available on the roboflow universe [here](ht
 
 ![realtime-demo](demo/rpi-realtime.gif)
 # License
-This project is licensed under the GNU v3.0 License - see the [LICENSE.md](LICENSE.md) file for details.
+This project is licensed under the GNU v3.0 License - see the [LICENSE](LICENSE) file for details.
+
+# Acknowledgements
+I would like to address my thanks to the CRISES Group and my internship tutor in the Universitat Rovira i Virgili for the opportunity to work on this project by providing me the necessary resources and support. 
+```
+```
