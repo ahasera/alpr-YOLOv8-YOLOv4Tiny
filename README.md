@@ -45,7 +45,7 @@ You first need to meet dependencies requirements.
 
 ```
 sudo apt update
-sudo apt install libcap-dev -y
+sudo apt install libcap-dev libjpeg-devel -y
 ```
 
 ####  CENTOS, Fedora, Alma, RHEL based systems:
@@ -68,6 +68,7 @@ python3 -m venv venv
 Then install the requirements with pip :
 
 ```
+pip install --upgrade pip setuptools
 pip install -r requirements.txt
 ```
 
