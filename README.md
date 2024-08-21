@@ -84,7 +84,7 @@ python3 rpi-lp.py
 Available options are:
 
 `--preprocess` option for preprocessing steps (detailed here). I recommend to use it only if OCR results are not satisfying.
-`--ocr` <easyocr or paddleocr> let you choose your OCR engine (EasyOCR by default as it was the one originally used, but PaddleOCR seems to be more accurate)
+`--ocr` "easyocr" or "paddleocr" let you choose your OCR engine (EasyOCR by default as it was the one originally used, but PaddleOCR seems to be more accurate)
 `--confidence` <float> to set the confidence threshold for the detection (0.5 by default)
 `--input-size`  <int> to set the input size of the model (640 by default)
 
@@ -136,5 +136,3 @@ This project is licensed under the GNU v3.0 License - see the [LICENSE](LICENSE)
 
 # Acknowledgements
 I would like to address my thanks to the CRISES Group and my internship tutor in the Universitat Rovira i Virgili for the opportunity to work on this project by providing me the necessary resources and support. 
-```
-```
