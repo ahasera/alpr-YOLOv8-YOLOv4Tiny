@@ -1,5 +1,5 @@
 """
-License Plate Detection with YOLOv8 and EasyOCR
+License Plate Detection with YOLOv8 and EasyOCR or PaddleOCR
 
 This script performs vehicle and license plate detection using YOLOv8 models,
 followed by Optical Character Recognition (OCR) on detected license plates.
@@ -13,14 +13,16 @@ Usage:
 
 Arguments:
     --preprocess: Enable preprocessing of images before detection (optional)
-    --confidence: Confidence threshold for detection (default: 0.5)
-    --input-size: Input size for YOLO models, must be multiple of 32 (default: 416)
+    --confidence: Confidence threshold for detection (default: 0.5) I recommend to use 0.3 for higher detections rate
+    --input-size: Input size for YOLO models, must be multiple of 32 (default: 640)
+    --ocr: OCR engine to use (easyocr or paddleocr) EasyOCR is default
 
 Dependencies:
     - OpenCV (cv2)
     - NumPy
     - Ultralytics YOLO
     - EasyOCR
+    - PaddleOCR & PaddlePaddle 
     - tqdm
     - Custom preprocessing module (preprocessing.py)
 
@@ -31,16 +33,18 @@ Date: 25/07/2024
 """
 import os
 import cv2
-from ultralytics import YOLO
 import easyocr
-from tqdm import tqdm
+
 import time
 import gc
 import multiprocessing as mp
 import argparse
-from preprocessing import preprocess_image
+import paddleocr
 import logging
+from preprocessing import preprocess_image
+from tqdm import tqdm
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from ultralytics import YOLO
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -49,7 +53,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 parser = argparse.ArgumentParser(description='Vehicle and License Plate Detection with optional preprocessing')
 parser.add_argument('--preprocess', action='store_true', help='Enable preprocessing of images, see preprocessing.py')
 parser.add_argument('--confidence', type=float, default=0.5, help='Confidence threshold for detection')
-parser.add_argument('--input-size', type=int, default=416, help='Input size for YOLO models, must be 32 multiple')
+parser.add_argument('--input-size', type=int, default=640, help='Input size for YOLO models, must be 32 multiple')
+parser.add_argument('--ocr', type=str, default='easyocr', help='OCR engine to use (easyocr or paddleocr) EasyOCR is default')
 args = parser.parse_args()
 
 """
@@ -69,8 +74,11 @@ except Exception as e:
     logging.error(f"Error while loading license-plate model: {e}")
     exit(1)
 
-# Initialize EasyOCR reader
-reader = easyocr.Reader(['en'])
+# Initialize EasyOCR reader or PaddleOCR depend on args
+if args.ocr == 'paddleocr':
+    ocr_paddle = paddleocr.PaddleOCR(use_angle_cls=False, lang='en')
+else:
+    reader = easyocr.Reader(['en'])
 
 def adjust_text_position(image, text_x, text_y, text, font_scale, thickness, used_positions):
     """
@@ -190,12 +198,27 @@ def detect_and_recognize(image_path, output_folder, cropped_folder, log_file, ar
                                 
                                 # Perform OCR on the license plate, and measure OCR time
                                 start_time = time.time()
-                                ocr_result = reader.readtext(plate)
+                                detections = []
+                                if args.ocr == 'paddleocr':
+                                    ocr_result = ocr_paddle.ocr(plate)
+                                    for res in ocr_result[0]:
+                                        # res[1] should contain a tuple (text, confidence)
+                                        if len(res[1]) >= 2:
+                                            text = res[1][0]
+                                            prob = res[1][1]
+                                            detections.append((None, text, prob))
+                                        else:
+                                            logging.error(f"Unexpected OCR result format: {res}")
+                                else:
+                                    ocr_result = reader.readtext(plate)
+                                    detections = [(bbox_ocr, text, prob) for (bbox_ocr, text, prob) in ocr_result]
                                 ocr_time = format_inference_time(start_time)
                                 log.write(f"OCR time: {ocr_time} ms\n")
+
+
                                 
                                 # Annotate the image with OCR results
-                                for (bbox_ocr, text, prob) in ocr_result:
+                                for (bbox_ocr, text, prob) in detections: # we use detections instead of ocr_result to avoid confusion
                                     text_x_position = int(px1) + int(x1)
                                     text_y_position = int(py1) + int(y1) - 10
                                     if text_y_position < 10:
@@ -235,12 +258,25 @@ def detect_and_recognize(image_path, output_folder, cropped_folder, log_file, ar
                         
                         # Perform OCR on the license plate, and measure time
                         start_time = time.time()
-                        ocr_result = reader.readtext(plate)
+                        detections = []
+                        if args.ocr == 'paddleocr':
+                            ocr_result = ocr_paddle.ocr(plate)
+                            for res in ocr_result[0]:
+                                # res[1] should contain a tuple (text, confidence)
+                                if len(res[1]) >= 2:
+                                    text = res[1][0]
+                                    prob = res[1][1]
+                                    detections.append((None, text, prob))
+                                else:
+                                    logging.error(f"Unexpected OCR result format: {res}")
+                        else:
+                            ocr_result = reader.readtext(plate)
+                            detections = [(bbox_ocr, text, prob) for (bbox_ocr, text, prob) in ocr_result]
                         ocr_time = format_inference_time(start_time)
                         log.write(f"OCR time: {ocr_time} ms\n")
                         
                         # Annotate the image with OCR results
-                        for (bbox_ocr, text, prob) in ocr_result:
+                        for (bbox_ocr, text, prob) in detections: #same
                             text_x_position = int(x1)
                             text_y_position = int(y1) - 10
                             if text_y_position < 10:

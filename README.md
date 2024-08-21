@@ -81,7 +81,20 @@ You can run batch processing programs with these simple commands (run once to do
 python3 lpdetect.py 
 python3 rpi-lp.py
 ```
-Add `--preprocess` option for preprocessing steps (detailed here)
+Available options are:
+
+`--preprocess` option for preprocessing steps (detailed here). I recommend to use it only if OCR results are not satisfying.
+`--ocr` <easyocr or paddleocr> let you choose your OCR engine (EasyOCR by default as it was the one originally used, but PaddleOCR seems to be more accurate)
+`--confidence` <float> to set the confidence threshold for the detection (0.5 by default)
+`--input-size`  <int> to set the input size of the model (640 by default)
+
+Another example usage of `lpdetect.py` :
+
+
+```
+python3 lpdetect.py --preprocess --ocr paddleocr --confidence 0.3 
+```
+
 
 Example usage of `clean.py` :
 ```

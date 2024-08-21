@@ -10,3 +10,5 @@ pillow==9.5.0
 picamera2==0.3.18
 pytesseract==0.3.10
 pandas==2.2.2
+paddleocr==2.8.1
+paddlepaddle==2.6.1
